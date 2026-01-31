@@ -28,6 +28,9 @@ __all__ = [
     "MissingToMaxDepth",
     "Transform",
     "TransformContext",
+    "TransformPipeline",
+    "TransformMiddleware",
+    "identity_transform",
 ]
 
 
@@ -55,6 +58,34 @@ class Transform(Protocol):
         ...
 
 
+def identity_transform(
+    observations: Observations, ctx: TransformContext
+) -> Observations:
+    return observations
+
+
+class TransformPipeline(Transform):
+    def __init__(self, transforms: list[TransformMiddleware]):
+        transform = identity_transform
+        for next_transform in reversed(transforms):
+            transform = next_transform(transform)
+        self._transform = transform
+
+    def __call__(
+        self, observations: Observations, ctx: TransformContext
+    ) -> Observations:
+        return self._transform(observations, ctx)
+
+
+class TransformMiddleware:
+    def __init__(self, transform: type[Transform], **kwargs):
+        self._transform = transform
+        self._kwargs = kwargs
+
+    def __call__(self, next_transform: Transform) -> Transform:
+        return self._transform(next_transform, **self._kwargs)
+
+
 class MissingToMaxDepth(Transform):
     """Return max depth when no mesh is present at a location.
 
@@ -63,15 +94,17 @@ class MissingToMaxDepth(Transform):
     https://github.com/facebookresearch/habitat-sim/issues/1157 for discussion.
     """
 
-    def __init__(self, agent_id: AgentID, max_depth, threshold=0):
+    def __init__(self, next_transform: Transform, agent_id: AgentID, max_depth, threshold=0):
         """Initialize the transform.
 
         Args:
+            next_transform: The next transform in the chain.
             agent_id: agent id of the agent where the transform should be applied.
             max_depth: numeric that will replace missing
             threshold: (optional) numeric, anything less than this is counted as
                 missing. Defaults to 0.
         """
+        self.next_transform = next_transform
         self.agent_id = agent_id
         self.max_depth = max_depth
         self.threshold = threshold
@@ -79,7 +112,8 @@ class MissingToMaxDepth(Transform):
     def __call__(
         self, observations: Observations, _ctx: TransformContext
     ) -> Observations:
-        return self.call(observations)
+        observations = self.call(observations)
+        return self.next_transform(observations, _ctx)
 
     def call(self, observations: Observations) -> Observations:
         """Replace missing depth values with max_depth.
@@ -100,21 +134,24 @@ class MissingToMaxDepth(Transform):
 class AddNoiseToRawDepthImage(Transform):
     """Add gaussian noise to raw sensory input."""
 
-    def __init__(self, agent_id: AgentID, sigma):
+    def __init__(self, next_transform: Transform, agent_id: AgentID, sigma):
         """Initialize the transform.
 
         Args:
+            next_transform: The next transform in the chain.
             agent_id: agent id of the agent where the transform should be applied.
                 Transform will be applied to all depth sensors of the agent.
             sigma: standard deviation of noise distribution.
         """
+        self.next_transform = next_transform
         self.agent_id = agent_id
         self.sigma = sigma
 
     def __call__(
         self, observations: Observations, ctx: TransformContext
     ) -> Observations:
-        return self.call(observations, rng=ctx.rng)
+        observations = self.call(observations, rng=ctx.rng)
+        return self.next_transform(observations, ctx)
 
     def call(
         self, observations: Observations, rng: np.random.RandomState
@@ -155,15 +192,17 @@ class GaussianSmoothing(Transform):
     in a real-world depth camera.
     """
 
-    def __init__(self, agent_id: AgentID, sigma=2, kernel_width=3):
+    def __init__(self, next_transform: Transform, agent_id: AgentID, sigma=2, kernel_width=3):
         """Initialize the transform.
 
         Args:
+            next_transform: The next transform in the chain.
             agent_id: agent id of the agent where the transform should be applied.
                 Transform will be applied to all depth sensors of the agent.
             sigma: sigma of gaussian smoothing kernel. Default is 2.
             kernel_width: width of the smoothing kernel. Default is 3.
         """
+        self.next_transform = next_transform
         self.agent_id = agent_id
         self.sigma = sigma
         self.kernel_width = kernel_width
@@ -173,7 +212,8 @@ class GaussianSmoothing(Transform):
     def __call__(
         self, observations: Observations, _ctx: TransformContext
     ) -> Observations:
-        return self.call(observations)
+        observations = self.call(observations)
+        return self.next_transform(observations, _ctx)
 
     def call(self, observations: Observations) -> Observations:
         """Apply gaussian smoothing to depth images.
@@ -301,6 +341,7 @@ class DepthTo3DLocations(Transform):
 
     def __init__(
         self,
+        next_transform: Transform,
         agent_id: AgentID,
         sensor_ids,
         resolutions,
@@ -312,6 +353,7 @@ class DepthTo3DLocations(Transform):
         get_all_points=False,
         use_semantic_sensor=False,
     ):
+        self.next_transform = next_transform
         self.inv_k = []
         self.h, self.w = [], []
 
@@ -359,7 +401,8 @@ class DepthTo3DLocations(Transform):
     def __call__(
         self, observations: Observations, ctx: TransformContext
     ) -> Observations:
-        return self.call(observations, state=ctx.state)
+        observations = self.call(observations, state=ctx.state)
+        return self.next_transform(observations, ctx)
 
     def call(
         self, observations: Observations, state: ProprioceptiveState | None = None
