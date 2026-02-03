@@ -649,12 +649,13 @@ class HabitatSM(SensorModule):
         Returns:
             State with features and morphological features. Noise may be added.
             use_state flag may be set.
-        """
+        """ 
         if self.save_raw_obs and not self.is_exploring:
             self._snapshot_telemetry.raw_observation(
                 data, self.state.rotation, self.state.position
             )
 
+        # TRANSFORM CHAIN CALL HERE
         observed_state = self._habitat_observation_processor.process(data)
 
         if observed_state.use_state:
@@ -677,6 +678,7 @@ class HabitatSM(SensorModule):
 class StateFilter(Protocol):
     def __call__(self, state: State) -> State: ...
     def reset(self) -> None: ...
+
 
 
 class PassthroughStateFilter(StateFilter):
