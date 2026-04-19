@@ -28,20 +28,26 @@ class FeatureEvidenceCalculator(Protocol):
 
 class DefaultFeatureEvidenceCalculator:
     @staticmethod
-    def chi_square_distance(
+    def hellinger_distance(
         query_fv: np.ndarray,
         node_fvs: np.ndarray,
-        epsilon: float = 1e-10,
     ) -> np.ndarray:
-        """Compute chi-square distance between a node's feature vectors and
-        a query feature vector.
+        """Compute Hellinger distance between a query feature vector and
+        a set of node feature vectors.
+
+        Assumes inputs are normalized histograms (sum to 1).
 
         Returns:
-            A vector of chi-square distances as floats in the range [0, 1] between each
-            node's feature vector and the query feature vector.
+            A vector of Hellinger distances in the range [0, 1].
         """
-        return 0.5 * np.sum(((query_fv - node_fvs) ** 2) /
-                            (query_fv + node_fvs + epsilon), axis=1)
+        # Ensure numerical stability (optional but recommended)
+        query_sqrt = np.sqrt(query_fv)
+        node_sqrt = np.sqrt(node_fvs)
+
+        return (1.0 / np.sqrt(2.0)) * np.linalg.norm(
+            node_sqrt - query_sqrt,
+            axis=1
+        )
 
     @staticmethod
     def calculate(
@@ -84,6 +90,10 @@ class DefaultFeatureEvidenceCalculator:
                 "pose_fully_defined",
             ]:
                 continue
+            # import pdb;
+            # breakpoint()
+            if feature not in channel_query_features:
+                continue
             if hasattr(channel_query_features[feature], "__len__"):
                 feature_length = len(channel_query_features[feature])
             else:
@@ -121,7 +131,7 @@ class DefaultFeatureEvidenceCalculator:
             lbp_feature_vector = feature_vectors["local_binary_pattern"]
             query_lbp_fv = feature_list[lbp_feature_vector]
             node_lbp_fv = channel_feature_array[:, lbp_feature_vector]
-            chi2_dist = DefaultFeatureEvidenceCalculator.chi_square_distance(
+            chi2_dist = DefaultFeatureEvidenceCalculator.hellinger_distance(
                 query_lbp_fv,
                 node_lbp_fv
             )

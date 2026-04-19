@@ -16,6 +16,7 @@ from typing import Any, ClassVar, Protocol
 import numpy as np
 import quaternion as qt
 from scipy.spatial.transform import Rotation
+from scipy.ndimage import gaussian_filter
 from skimage.color import rgb2gray, rgb2hsv
 from skimage.feature import local_binary_pattern
 
@@ -30,6 +31,7 @@ from tbp.monty.frameworks.models.motor_system_state import (
     SensorState,
 )
 from tbp.monty.frameworks.sensors import SensorID
+from tbp.monty.frameworks.utils.local_ternary_pattern import local_ternary_pattern, LTPResult
 from tbp.monty.frameworks.utils.sensor_processing import (
     log_sign,
     principal_curvatures,
@@ -322,18 +324,19 @@ class ObservationProcessor:
         if "local_binary_pattern" in self._features:
             patch = rgba_feat[:, :, :3]
             gray = rgb2gray(patch)
-            gray = (gray * 255).astype(np.uint8)
-            p = 8
-            r = 1
-            lbp = local_binary_pattern(gray, p, r, method="uniform")
-            n_bins = p + 2
-            hist, _ = np.histogram(
-                lbp.ravel(),
-                bins=n_bins,
-                range=(0, n_bins),
+            gray_arr = (gray * 255).astype(np.uint8)
+            gray_arr = gaussian_filter(gray_arr, sigma=1.0)
+            ltp: LTPResult = local_ternary_pattern(
+                gray=gray_arr,
+                p=8,
+                r=1,
+                threshold=3.0,
+                method="ror",
+                mask=None,
+                normalize=True,
             )
+            hist = ltp.histogram
             hist = hist.astype("float")
-            hist /= (hist.sum() + 1e-6)
             features["local_binary_pattern"] = hist
 
         # Note we only determine curvature if we could determine a valid surface normal
