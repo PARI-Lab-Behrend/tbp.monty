@@ -13,7 +13,6 @@ from typing import Any
 from unittest.mock import MagicMock, patch, sentinel
 
 import numpy as np
-import numpy.testing as nptest
 import numpy.typing as npt
 import pytest
 import quaternion as qt
@@ -21,6 +20,7 @@ from parameterized import parameterized_class
 
 from tbp.monty.cmp import Goal
 from tbp.monty.context import RuntimeContext
+from tbp.monty.frameworks.models.abstract_monty_classes import SensorObservation
 from tbp.monty.frameworks.models.motor_system_state import AgentState, SensorState
 from tbp.monty.frameworks.models.salience.on_object_observation import (
     OnObjectObservation,
@@ -69,7 +69,7 @@ class SalienceSMTest(unittest.TestCase):
             snapshot_telemetry=MagicMock(),
         )
         self.default_sensor_state = SensorState(
-            position=np.array([0, 0, 0]),
+            position=(0, 0, 0),
             rotation=qt.quaternion(1, 0, 0, 0),
         )
         self.state = AgentState(
@@ -113,16 +113,16 @@ class SalienceSMTest(unittest.TestCase):
         self.sensor_module._return_inhibitor.return_value = sentinel.ior_weights  # type: ignore[attr-defined]
         salience = 0.1 * np.array([1, 2, 3])
         self.sensor_module._weight_salience = MagicMock(return_value=salience)  # type: ignore[method-assign]
-        data: dict[str, Any] = {
-            "rgba": np.zeros((64, 64, 4)),
-            "depth": np.zeros((64, 64)),
-        }
+        data = SensorObservation(
+            rgba=np.zeros((64, 64, 4), dtype=np.uint8),
+            depth=np.zeros((64, 64)),
+        )
 
         self.sensor_module.step(self.ctx, data)
         goals = self.sensor_module.propose_goals()
 
         self.sensor_module._salience_strategy.assert_called_once_with(  # type: ignore[attr-defined]
-            rgba=data["rgba"], depth=data["depth"]
+            ctx=self.ctx, rgba=data["rgba"], depth=data["depth"]
         )
         on_object_observation.assert_called_once_with(data, sentinel.salience_map)
         self.sensor_module._return_inhibitor.assert_called_once_with(  # type: ignore[attr-defined]
@@ -145,7 +145,7 @@ class SalienceSMTest(unittest.TestCase):
                 sender_type="SM",
             )
             # TODO: implement __eq__ for GoalState
-            nptest.assert_array_equal(g.location, expected_goal.location)
+            np.testing.assert_array_equal(g.location, expected_goal.location)
             self.assertEqual(g.confidence, expected_goal.confidence)
             self.assertEqual(g.use_state, expected_goal.use_state)
             self.assertEqual(
@@ -174,12 +174,12 @@ class SalienceSMPrivateTest(unittest.TestCase):
     ) -> None:
         salience = 2 * np.ones(10)
         normalized = self.sensor_module._normalize_salience(salience)
-        nptest.assert_array_equal(normalized, np.ones(10))
+        np.testing.assert_array_equal(normalized, np.ones(10))
 
     def test_normalize_salience_normalizes_empty_salience(self) -> None:
         salience = np.array([])
         normalized = self.sensor_module._normalize_salience(salience)
-        nptest.assert_array_equal(normalized, np.array([]))
+        np.testing.assert_array_equal(normalized, np.array([]))
 
     def test_weight_salience_decays_randomizes_and_normalizes_salience_in_that_order(
         self,

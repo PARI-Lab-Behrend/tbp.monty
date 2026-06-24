@@ -15,7 +15,6 @@ from typing import Any, ClassVar, Protocol
 
 import numpy as np
 import quaternion as qt
-from scipy.spatial.transform import Rotation
 from skimage.color import rgb2hsv
 
 from tbp.monty.cmp import Message
@@ -42,6 +41,8 @@ from tbp.monty.frameworks.utils.sensor_processing import (
     surface_normal_total_least_squares,
 )
 from tbp.monty.frameworks.utils.spatial_arithmetics import get_angle
+from tbp.monty.geometry import Rotation
+from tbp.monty.memento import Memento
 
 __all__ = [
     "CameraSM",
@@ -93,9 +94,7 @@ class SnapshotTelemetry:
             )
         )
 
-    def state_dict(
-        self,
-    ) -> dict[str, list[SensorObservation] | list[dict[str, np.ndarray]]]:
+    def state_dict(self) -> Memento:
         """Returns recorded raw observation snapshots.
 
         Returns:
@@ -147,6 +146,8 @@ class ObservationProcessor:
         "mean_curvature_sc",
         "curvature_for_TM",
         "coords_for_TM",
+        "edge_strength",
+        "coherence",
     ]
 
     def __init__(
@@ -196,7 +197,7 @@ class ObservationProcessor:
         """
         obs_3d = observation["semantic_3d"]
         sensor_frame_data = observation["sensor_frame_data"]
-        world_camera = observation["world_camera"]
+        cam_to_world = observation["cam_to_world"]
         rgba_feat = observation["rgba"]
         depth_feat = (
             observation["depth"]
@@ -233,7 +234,7 @@ class ObservationProcessor:
                 center_id,
                 center_row_col,
                 sensor_frame_data,
-                world_camera,
+                cam_to_world,
             )
         else:
             valid_signals = False
@@ -272,7 +273,7 @@ class ObservationProcessor:
         center_id: int,
         center_row_col: int,
         sensor_frame_data: np.ndarray,
-        world_camera: np.ndarray,
+        cam_to_world: np.ndarray,
     ) -> tuple[dict[str, Any], dict[str, Any], bool]:
         """Extract features configured for extraction from sensor patch.
 
@@ -288,7 +289,7 @@ class ObservationProcessor:
         # ------------ Extract Morphological Features ------------
         # Get surface normal for graph matching with features
         surface_normal, valid_sn = self._get_surface_normals(
-            obs_3d, sensor_frame_data, center_id, world_camera
+            obs_3d, sensor_frame_data, center_id, cam_to_world
         )
 
         k1, k2, dir1, dir2, valid_pc = principal_curvatures(
@@ -364,15 +365,15 @@ class ObservationProcessor:
         obs_3d: np.ndarray,
         sensor_frame_data: np.ndarray,
         center_id: int,
-        world_camera: np.ndarray,
+        cam_to_world: np.ndarray,
     ) -> tuple[np.ndarray, bool]:
         if self._surface_normal_method == SurfaceNormalMethod.TLS:
             surface_normal, valid_sn = surface_normal_total_least_squares(
-                obs_3d, center_id, world_camera[:3, 2]
+                obs_3d, center_id, cam_to_world[:3, 2]
             )
         elif self._surface_normal_method == SurfaceNormalMethod.OLS:
             surface_normal, valid_sn = surface_normal_ordinary_least_squares(
-                sensor_frame_data, world_camera, center_id
+                sensor_frame_data, cam_to_world, center_id
             )
         elif self._surface_normal_method == SurfaceNormalMethod.NAIVE:
             surface_normal, valid_sn = surface_normal_naive(
@@ -397,7 +398,7 @@ class Probe(SensorModule):
     observations and does not emit a Cortical Message.
     """
 
-    def __init__(self, sensor_module_id: str, save_raw_obs: bool):
+    def __init__(self, sensor_module_id: str, save_raw_obs: bool) -> None:
         """Initialize the probe.
 
         Args:
@@ -414,11 +415,10 @@ class Probe(SensorModule):
 
         self._snapshot_telemetry = SnapshotTelemetry()
 
-    def state_dict(self):
+    def state_dict(self) -> Memento:
         return self._snapshot_telemetry.state_dict()
 
-    def update_state(self, agent: AgentState):
-        """Update information about the sensors location and rotation."""
+    def update_state(self, agent: AgentState) -> None:
         sensor = agent.sensors[SensorID(self.sensor_module_id)]
         self.state = SensorState(
             position=agent.position
@@ -431,7 +431,7 @@ class Probe(SensorModule):
         ctx: RuntimeContext,  # noqa: ARG002
         observation: SensorObservation,
         motor_only_step: bool = False,  # noqa: ARG002
-    ) -> Message | None:
+    ) -> None:
         if self.save_raw_obs and not self.is_exploring:
             self._snapshot_telemetry.raw_observation(
                 observation, self.state.rotation, self.state.position
@@ -439,8 +439,7 @@ class Probe(SensorModule):
 
         return None
 
-    def pre_episode(self) -> None:
-        """Reset buffer and is_exploring flag."""
+    def reset(self) -> None:
         self._snapshot_telemetry.reset()
         self.is_exploring = False
 
@@ -614,7 +613,6 @@ class CameraSM(SensorModule):
         # Tests check sm.features, not sure if this should be exposed
         self.features = features
         self.processed_obs: list[dict[str, Any]] = []
-        self.states: list[SensorState] = []
         # TODO: give more descriptive & distinct names
         self.sensor_module_id = sensor_module_id
         self.save_raw_obs = save_raw_obs
@@ -624,15 +622,13 @@ class CameraSM(SensorModule):
             else TransformPipeline([])
         )
 
-    def pre_episode(self) -> None:
+    def reset(self) -> None:
         self._snapshot_telemetry.reset()
         self._percept_filter.reset()
         self.is_exploring = False
         self.processed_obs = []
-        self.states = []
 
-    def update_state(self, agent: AgentState):
-        """Update information about the sensors location and rotation."""
+    def update_state(self, agent: AgentState) -> None:
         sensor = agent.sensors[SensorID(self.sensor_module_id)]
         self.state = SensorState(
             position=agent.position
@@ -641,7 +637,7 @@ class CameraSM(SensorModule):
         )
         self.agent_state = agent # Need agent state for context in transform pipeline
 
-    def state_dict(self):
+    def state_dict(self) -> Memento:
         state_dict = self._snapshot_telemetry.state_dict()
         state_dict.update(processed_observations=self.processed_obs)
         return state_dict
@@ -683,7 +679,6 @@ class CameraSM(SensorModule):
 
         if not self.is_exploring:
             self.processed_obs.append(percept.__dict__)
-            self.states.append(self.state)
 
         return percept
 

@@ -10,10 +10,10 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import numpy as np
 import torch
-from scipy.spatial.transform import Rotation
 from sklearn.neighbors import KDTree
 
 from tbp.monty.context import RuntimeContext
@@ -30,6 +30,7 @@ from tbp.monty.frameworks.utils.spatial_arithmetics import (
     get_unique_rotations,
     rotate_pose_dependent_features,
 )
+from tbp.monty.geometry import Rotation
 
 __all__ = ["FeatureGraphLM", "FeatureGraphMemory"]
 
@@ -44,15 +45,18 @@ class FeatureGraphLM(GraphLM):
 
     def __init__(
         self,
-        max_match_distance,
-        tolerances,
-        path_similarity_threshold=0.1,
-        pose_similarity_threshold=0.35,
-        required_symmetry_evidence=5,
-        graph_delta_thresholds=None,
-        initial_possible_poses="informed",
-        umbilical_num_poses=8,
-    ):
+        max_match_distance: float,
+        # TODO: Create a specific type for `tolerances`.
+        tolerances: dict[str, dict[str, Any]],
+        path_similarity_threshold: float = 0.1,
+        pose_similarity_threshold: float = 0.35,
+        required_symmetry_evidence: int = 5,
+        # TODO: Create a specific type for `graph_delta_thresholds`.
+        #  Is this the same type as `tolerances`?
+        graph_delta_thresholds: dict[str, dict[str, Any]] | None = None,
+        initial_possible_poses: str = "informed",
+        umbilical_num_poses: int = 8,
+    ) -> None:
         """Initialize Learning Module.
 
         Args:
@@ -101,8 +105,9 @@ class FeatureGraphLM(GraphLM):
     # =============== Public Interface Functions ===============
 
     # ------------------- Main Algorithm -----------------------
+
     def reset(self):
-        """Call this before each episode."""
+        """Reset initial hypotheses."""
         (
             self.possible_matches,
             self.possible_paths,
@@ -454,7 +459,6 @@ class FeatureGraphLM(GraphLM):
             New possible paths and poses.
         """
         first_input_channel = next(iter(features.keys()))
-        displacement = displacement[first_input_channel]
         new_possible_paths = []
         new_possible_poses = []
 

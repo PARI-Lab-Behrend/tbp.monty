@@ -216,3 +216,7 @@
 \b[Mm]onty\b
 \bKD-Tree\b
 \b[Kk]eyframes?\b
+\bFrintrop\b
+\b[Oo]pponency\b
+\bExcalidraw\b
+\blazyconfigs\b

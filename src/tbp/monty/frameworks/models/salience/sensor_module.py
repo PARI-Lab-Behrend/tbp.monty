@@ -24,10 +24,11 @@ from tbp.monty.frameworks.models.salience.on_object_observation import (
 from tbp.monty.frameworks.models.salience.return_inhibitor import ReturnInhibitor
 from tbp.monty.frameworks.models.salience.strategies import (
     SalienceStrategy,
-    UniformSalienceStrategy,
+    Uniform,
 )
 from tbp.monty.frameworks.models.sensor_modules import SnapshotTelemetry
 from tbp.monty.frameworks.sensors import SensorID
+from tbp.monty.memento import Memento
 
 __all__ = ["SalienceSM"]
 
@@ -44,9 +45,7 @@ class SalienceSM(SensorModule):
         self._sensor_module_id = sensor_module_id
         self._save_raw_obs = save_raw_obs
         self._salience_strategy = (
-            UniformSalienceStrategy()
-            if salience_strategy is None
-            else salience_strategy
+            Uniform() if salience_strategy is None else salience_strategy
         )
         self._return_inhibitor = (
             ReturnInhibitor() if return_inhibitor is None else return_inhibitor
@@ -63,10 +62,10 @@ class SalienceSM(SensorModule):
     def sensor_module_id(self) -> str:
         return self._sensor_module_id
 
-    def state_dict(self):
+    def state_dict(self) -> Memento:
         return self._snapshot_telemetry.state_dict()
 
-    def update_state(self, agent: AgentState):
+    def update_state(self, agent: AgentState) -> None:
         """Update information about the sensor's location and rotation."""
         sensor = agent.sensors[SensorID(self.sensor_module_id)]
         self.state = SensorState(
@@ -102,7 +101,7 @@ class SalienceSM(SensorModule):
             return
 
         salience_map = self._salience_strategy(
-            rgba=observation["rgba"], depth=observation["depth"]
+            ctx=ctx, rgba=observation["rgba"], depth=observation["depth"]
         )
 
         on_object = on_object_observation(observation, salience_map)
@@ -164,8 +163,7 @@ class SalienceSM(SensorModule):
 
         return (weighted_salience - min_) / scale
 
-    def pre_episode(self) -> None:
-        """This method is called before each episode."""
+    def reset(self) -> None:
         self._goals.clear()
         self._return_inhibitor.reset()
         self._snapshot_telemetry.reset()

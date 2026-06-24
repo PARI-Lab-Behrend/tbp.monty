@@ -18,18 +18,18 @@ from collections import deque
 from itertools import chain
 from pathlib import Path
 from sys import getsizeof
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
-import quaternion as qt
 import torch
-from scipy.spatial.transform import Rotation
 
 from tbp.monty.frameworks.utils.spatial_arithmetics import (
     get_unique_rotations,
     rotations_to_quats,
 )
+from tbp.monty.geometry import Rotation
 
 logger = logging.getLogger(__name__)
 
@@ -76,12 +76,15 @@ def load_stats(
     return train_stats, eval_stats, detailed_stats, lm_models
 
 
-def load_models_from_dir(exp_path, pretrained_dict=None):
+def load_models_from_dir(
+    exp_path: Path | str, pretrained_dict: Path | str | None = None
+) -> dict[str, Any]:
+    # TODO: return value needs a better type
     lm_models = {}
 
     if pretrained_dict is not None:
         lm_models["pretrained"] = {}
-        state_dict = torch.load(Path(pretrained_dict) / "model.pt")
+        state_dict = torch.load(Path(pretrained_dict) / "model.pt", weights_only=False)
         for lm_id in list(state_dict["lm_dict"].keys()):
             pretrained_models = state_dict["lm_dict"][lm_id]["graph_memory"]
             lm_models["pretrained"][lm_id] = pretrained_models
@@ -89,7 +92,7 @@ def load_models_from_dir(exp_path, pretrained_dict=None):
     for child in Path(exp_path).iterdir():
         folder = child.name
         if folder.isnumeric():
-            state_dict = torch.load(child / "model.pt")
+            state_dict = torch.load(child / "model.pt", weights_only=False)
             for lm_id in list(state_dict["lm_dict"].keys()):
                 epoch_models = state_dict["lm_dict"][lm_id]["graph_memory"]
                 if folder not in lm_models:
@@ -394,7 +397,7 @@ def compute_pose_errors(
 ) -> npt.NDArray[np.float64] | float:
     """Computes the angular pose errors between predicted and target rotations.
 
-    Both inputs must be instances of `scipy.spatial.transform.Rotation`. The
+    Both inputs must be instances of `tbp.monty.geometry.Rotation`. The
     `predicted_rotation` may contain a single rotation or a list of rotations,
     while `target_rotation` must be exactly one rotation.
 
@@ -748,7 +751,7 @@ def get_stats_per_lm(model, target, episode_seed: int):
     primary_target_dict = target_data_to_dict(target)
     for i, lm in enumerate(model.learning_modules):
         lm_stats = get_graph_lm_episode_stats(lm)
-        if hasattr(lm, "evidence"):
+        if hasattr(lm, "hypotheses_updater"):
             lm_stats = add_evidence_lm_episode_stats(
                 lm, lm_stats, target["consistent_child_objects"]
             )
@@ -852,7 +855,7 @@ def target_data_to_dict(target):
     output_dict["primary_target_object"] = target["object"]
     output_dict["primary_target_position"] = target["position"]
     output_dict["primary_target_rotation_euler"] = list(target["euler_rotation"])
-    output_dict["primary_target_rotation_quat"] = qt.as_float_array(target["rotation"])
+    output_dict["primary_target_rotation_quat"] = np.array(target["rotation"])
     # Currently scale is applied uniformly along all dimensions
     output_dict["primary_target_scale"] = target["scale"][0]
 

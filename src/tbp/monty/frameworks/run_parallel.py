@@ -25,8 +25,8 @@ import torch.multiprocessing as mp
 import wandb
 from omegaconf import DictConfig, OmegaConf
 
-from tbp.monty.frameworks.environments.embodied_data import (
-    EnvironmentInterfacePerObject,
+from tbp.monty.experiment.environment import (
+    OneObjectPerEpisodeInterface,
 )
 from tbp.monty.frameworks.environments.object_init_samplers import (
     Predefined,
@@ -627,7 +627,13 @@ def run_episodes_parallel(
         )
     print(f"Wandb setup took {time.time() - start_time} seconds")
     start_time = time.time()
-    with mp.Pool(num_parallel, maxtasksperchild=1) as p:
+
+    # Create a multiprocessing Context so that we can set the start method to "spawn".
+    # The default on MacOS is "spawn", but on Linux systems it uses "fork" by default.
+    # The "fork" method causes issues with the MuJoCo simulator's GL context, causing
+    # the system to hang when trying to render an image.
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(num_parallel, maxtasksperchild=1) as p:
         if train:
             # NOTE: since we don't use wandb logging for training right now
             # it is also not covered here. Might want to add that in the future.
@@ -706,7 +712,7 @@ def main(cfg: DictConfig):
     if cfg.experiment.config.do_train:
         assert issubclass(
             cfg.experiment.config.train_env_interface_class,
-            EnvironmentInterfacePerObject,
+            OneObjectPerEpisodeInterface,
         ), "parallel experiments only work (for now) with per object env interfaces"
 
         train_configs = generate_parallel_train_configs(
@@ -728,7 +734,7 @@ def main(cfg: DictConfig):
     if cfg.experiment.config.do_eval:
         assert issubclass(
             cfg.experiment.config.eval_env_interface_class,
-            EnvironmentInterfacePerObject,
+            OneObjectPerEpisodeInterface,
         ), "parallel experiments only work (for now) with per object env interfaces"
 
         eval_configs = generate_parallel_eval_configs(

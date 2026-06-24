@@ -14,10 +14,10 @@ import logging
 import torch
 
 from tbp.monty.context import RuntimeContext
-from tbp.monty.frameworks.actions.actions import Action
-from tbp.monty.frameworks.environments.embodied_data import (
-    SaccadeOnImageEnvironmentInterface,
+from tbp.monty.experiment.environment import (
+    SaccadeOnImageInterface,
 )
+from tbp.monty.frameworks.actions.actions import Action
 from tbp.monty.frameworks.experiments.mode import ExperimentMode
 from tbp.monty.frameworks.experiments.monty_experiment import (
     MontyExperiment,
@@ -65,19 +65,19 @@ class MontyObjectRecognitionExperiment(MontyExperiment):
 
         self.reset_episode_rng()
 
+        self.model.reset()
         # TODO, eventually it would be better to pass
         # self.env_interface.semantic_id_to_label via an "Observation" object when this
         # is eventually implemented, such that we can ensure this information is never
         # inappropriately accessed and used
         if hasattr(self.env_interface, "semantic_id_to_label"):
-            # TODO: Fix invalid pre_episode signature call
-            self.model.pre_episode(
+            self.model.fixme_set_ground_truth(
                 self.env_interface.primary_target,
                 self.env_interface.semantic_id_to_label,
             )
         else:
-            # TODO: Fix invalid pre_episode signature call
-            self.model.pre_episode(self.env_interface.primary_target)
+            self.model.fixme_set_ground_truth(self.env_interface.primary_target)
+
         self.env_interface.pre_episode(self.rng)
 
         self.max_steps = self.max_train_steps
@@ -107,7 +107,7 @@ class MontyObjectRecognitionExperiment(MontyExperiment):
 
             if self.show_sensor_output:
                 is_saccade_on_image_data_loader = isinstance(
-                    self.env_interface, SaccadeOnImageEnvironmentInterface
+                    self.env_interface, SaccadeOnImageInterface
                 )
                 self.live_plotter.show_observations(
                     *self.live_plotter.hardcoded_assumptions(observations, self.model),
@@ -136,6 +136,14 @@ class MontyObjectRecognitionExperiment(MontyExperiment):
                     )
                 else:
                     actions = self.model.step(ctx, observations, proprioceptive_state)
+                    actions = self._step_hook(
+                        ctx,
+                        self.model,
+                        self.supervised_lm_ids if self.supervised_lm_ids else [],
+                        step,
+                        observations,
+                        actions,
+                    )
             except StopIteration:
                 # TODO: StopIteration is being thrown by NaiveScanPolicy to signal
                 #       episode termination. This is a holdover from when we used
@@ -163,7 +171,7 @@ class MontyGeneralizationExperiment(MontyObjectRecognitionExperiment):
         """Pre episode where we pass target object to the model for logging."""
         if "model.pt" not in self.model_path.parts:
             model_path = self.model_path / "model.pt"
-        state_dict = torch.load(model_path)
+        state_dict = torch.load(model_path, weights_only=False)
         print(f"loading models again from {model_path}")
         self.model.load_state_dict(state_dict)
         super().pre_episode()

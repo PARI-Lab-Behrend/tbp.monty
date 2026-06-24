@@ -26,18 +26,21 @@ dependencies = [
     'pandas', # imported via conda (conda-forge::pandas)
     'pillow', # imported via conda (conda-forge::pillow)
     'pydantic>=2.10.6',
-    'numpy-quaternion==2023.0.3', # imported via conda (conda-forge::quaternion)
+    'numpy-quaternion==2023.0.3;python_version=="3.8"', # imported via conda (conda-forge::quaternion)
+    'numpy-quaternion==2024.0.13;python_version=="3.10"',
     'scikit-image', # imported via conda (conda-forge::scikit-image)
-    'scikit-learn==1.3.2', # imported via conda (conda-forge::scikit-learn)
+    'scikit-learn==1.3.2;python_version=="3.8"', # imported via conda (conda-forge::scikit-learn)
+    'scikit-learn;python_version>="3.9"', # for uv environment
     'scipy>=1.10.1', # imported via conda (conda-forge::scipy)
     'sympy', # imported via conda (conda-forge::sympy)
-    'torch==1.13.1', # imported via conda (pytorch::pytorch)
+    'torch==1.13.1;python_version=="3.8"', # imported via conda (pytorch::pytorch)
+    'torch;python_version>="3.9"',
     'torch-geometric==2.1.0.post1;python_version=="3.8"', # imported via conda (pyg::pyg)
     'torch-sparse==0.6.15;python_version=="3.8"', # imported via conda (pytorch::pytorch-sparse)
     'torch-scatter==2.0.9;python_version=="3.8"', # imported via conda (pytorch::pytorch-scatter)
-    'torch-geometric>=2.1.0.post1;python_version=="3.9"', # for uv environment
-    'torch-sparse>=0.6.15;python_version=="3.9"', # for uv environment
-    'torch-scatter>=2.0.9;python_version=="3.9"', # for uv environment
+    'torch-geometric>=2.1.0.post1;python_version>="3.9"', # for uv environment
+    'torch-sparse>=0.6.15;python_version>="3.9"', # for uv environment
+    'torch-scatter>=2.0.9;python_version>="3.9"', # for uv environment
     'tqdm', # imported via conda (conda-forge::tqdm)
     'typing-extensions',
     'wandb', # imported via conda (conda-forge::wandb)
@@ -115,7 +118,7 @@ print_version_tool = [
 
 [project.urls]
 Homepage = 'https://thousandbrainsproject.org'
-Documentation = 'https://thousandbrainsproject.readme.io/docs'
+Documentation = 'https://docs.thousandbrains.org/docs'
 Repository = 'https://github.com/thousandbrainsproject.tbp.monty'
 Issues = 'https://github.com/thousandbrainsproject/tbp.monty/issues'
 
@@ -138,10 +141,15 @@ ipython = 'IPython'
 
 [tool.pytest.ini_options]
 minversion = '6.0'
-addopts = '-ra -n auto'
+addopts = '-ra -n auto --doctest-modules --doctest-continue-on-failure'
 testpaths = [
+    'src', # discover doctests
     'tests/conf',
     'tests/unit',
+]
+norecursedirs = [
+    'src/tbp/monty/frameworks/utils',  # ignore where 'seaborn' module is required
+    'src/tbp/monty/simulators/mujoco', # ignore where 'mujoco' module is required
 ]
 filterwarnings = [
     'ignore:.*:DeprecationWarning'
@@ -149,11 +157,12 @@ filterwarnings = [
 junit_family = 'xunit1'
 
 [tool.autoimport.common_statements]
-"np" = 'import numpy as np'
-"nn" = 'import torch.nn as nn'
-"pd" = 'import panda as pd'
-"qt" = 'import quaternion as qt'
-"mn" = 'import magnum as mn'
+"np" = "import numpy as np"
+"npt" = "import numpy.typing as npt"
+"nn" = "import torch.nn as nn"
+"pd" = "import panda as pd"
+"qt" = "import quaternion as qt"
+"mn" = "import magnum as mn"
 
 [tool.coverage.run]
 branch = true
@@ -212,6 +221,8 @@ ignore = [
     # TBP-specific, deliberately ignored rules
     "N818", # N818: error-suffix-on-exception-name
     "COM812", # COM812: Trailing comma missing
+    "RET501", # RET501: Do not explicitly `return None` in function if it is the only possible return value
+    "PLR1711", # PLR1711: Useless `return` statement at end of function
     # End of deliberately ignored rules
     # Original inherited flake8 ignores
     "D1", # D1XX: Missing Docstrings

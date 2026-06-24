@@ -10,19 +10,23 @@
 from __future__ import annotations
 
 import logging
-from typing import ClassVar
+from typing import Any, ClassVar, Sequence
 
-from tbp.monty.cmp import Goal
+from tbp.monty.cmp import Goal, Message
 from tbp.monty.frameworks.actions.actions import Action
+from tbp.monty.frameworks.environments.environment import SemanticID
 from tbp.monty.frameworks.experiments.mode import ExperimentMode
 from tbp.monty.frameworks.loggers.exp_logger import BaseMontyLogger, TestLogger
 from tbp.monty.frameworks.models.abstract_monty_classes import (
+    LearningModule,
     Monty,
     Observations,
     RuntimeContext,
+    SensorModule,
 )
 from tbp.monty.frameworks.models.motor_system import MotorSystem
 from tbp.monty.frameworks.models.motor_system_state import ProprioceptiveState
+from tbp.monty.memento import Memento
 
 __all__ = ["MontyBase"]
 
@@ -34,8 +38,8 @@ class MontyBase(Monty):
 
     def __init__(
         self,
-        sensor_modules,
-        learning_modules,
+        sensor_modules: Sequence[SensorModule],
+        learning_modules: Sequence[LearningModule],
         motor_system: MotorSystem,
         sm_to_agent_dict,
         sm_to_lm_matrix,
@@ -45,7 +49,7 @@ class MontyBase(Monty):
         min_train_steps,
         num_exploratory_steps,
         max_total_steps,
-    ):
+    ) -> None:
         """Initialize the base class.
 
         Args:
@@ -53,9 +57,7 @@ class MontyBase(Monty):
             learning_modules: list of learning modules
             motor_system: class instance that aggregates proposed motor outputs
                 of learning modules and decides next action. Conceptually, this is
-                the subcortical motor area. Note: EnvironmentInterface takes a
-                motor_system as an argument. That motor system is the same as this
-                one.
+                the subcortical motor area.
             sm_to_agent_dict: dictionary mapping each sensor module id to the
                 list of habitat agents it receives input from. This is to simulate
                 columns with wide receptive fields that receive input from multiple
@@ -165,7 +167,7 @@ class MontyBase(Monty):
         ctx: RuntimeContext,
         observations: Observations,
         proprioceptive_state: ProprioceptiveState,
-    ):
+    ) -> None:
         sensor_module_outputs = []
         for sensor_module in self.sensor_modules:
             raw_obs = self.get_observations(
@@ -235,7 +237,7 @@ class MontyBase(Monty):
             sensory_inputs = self._collect_inputs_to_lm(i)
             getattr(self.learning_modules[i], self.step_type)(ctx, sensory_inputs)
 
-    def _collect_inputs_to_lm(self, lm_id):
+    def _collect_inputs_to_lm(self, lm_id: int) -> list[Message]:
         """Use sm_to_lm_matrix and lm_to_lm_matrix to collect inputs to LM i.
 
         Args:
@@ -256,8 +258,10 @@ class MontyBase(Monty):
         # Combine sensory inputs from SMs and LMs to LM i
         return self._combine_inputs(sensory_inputs_from_sms, sensory_inputs_from_lms)
 
-    def _combine_inputs(self, inputs_from_sms, inputs_from_lms) -> dict | None:
-        """Combine all inputs to an LM into one dict.
+    def _combine_inputs(
+        self, inputs_from_sms: Sequence[Message], inputs_from_lms: Sequence[Message]
+    ) -> list[Message]:
+        """Combine all inputs to an LM into one list of Messages.
 
         An LM only receives input from another LM if it also receives input from
         an SM. This makes sure that we keep a coarser resolution in the higher
@@ -269,13 +273,13 @@ class MontyBase(Monty):
         in a good way, combine_input or LM selection may have to become part of LM class
 
         Args:
-            inputs_from_sms: List of dicts of SM outputs.
-            inputs_from_lms: List of dicts of LM outputs.
+            inputs_from_sms: Sequence of Messages from SMs.
+            inputs_from_lms: Sequence of Messages from LMs.
 
         Returns:
-            Combined features and location from all inputs with interesting features.
+            Combined list of Messages from all inputs with interesting features.
             If there are no inputs or none of them are deemed interesting (i.e. off
-            object or low confidence LM) this returns None.
+            object or low confidence LM) this returns an empty list.
         """
         combined_inputs = [
             inputs_from_sms[i]
@@ -284,7 +288,7 @@ class MontyBase(Monty):
         ]
         if len(combined_inputs) == 0:
             # If we have no sensory input, we also don't use LM input
-            return None
+            return combined_inputs
 
         for lm_input in inputs_from_lms:
             if lm_input.use_state:
@@ -374,39 +378,48 @@ class MontyBase(Monty):
         self.step_type = "matching_step"
         for lm in self.learning_modules:
             lm.set_experiment_mode(mode)
-        # for sm in self.sensor_modules: sm.set_experiment_mode() unused & removed
 
-    def pre_episode(self):
+    def reset(self) -> None:
+        # TODO: move most (all?) of this logic to Experiment
         self._is_done = False
         self.reset_episode_steps()
         self.switch_to_matching_step()
         for lm in self.learning_modules:
-            lm.pre_episode()
+            lm.reset_stm()
 
         for sm in self.sensor_modules:
-            sm.pre_episode()
+            sm.reset()
 
-        self.motor_system.pre_episode()
+        self.motor_system.reset()
         self._goals = []
 
-    def post_episode(self):
+    def fixme_set_ground_truth(
+        self,
+        primary_target: dict[str, Any] | None = None,
+        semantic_id_to_label: dict[SemanticID, str] | None = None,
+    ) -> None:
+        pass
+
+    def update_ltm(self) -> None:
+        # At the end of an episode we ask each learning module
+        # to update their long-term memory from their short-term buffer.
         for lm in self.learning_modules:
-            lm.post_episode()
-        # for sm in self.sensor_modules: sm.post_episode() unused & removed
+            lm.update_ltm_from_stm()
+            lm.fixme_update_ground_truth()
 
     ###
     # Methods for saving and loading
     ###
 
-    def load_state_dict(self, state_dict):
-        assert len(state_dict["lm_dict"]) == len(self.learning_modules)
+    def load_state_dict(self, memento: Memento) -> None:
+        assert len(memento["lm_dict"]) == len(self.learning_modules)
         lm_counter = 0
-        lm_dict = state_dict["lm_dict"]
+        lm_dict = memento["lm_dict"]
         for lm_key in lm_dict:
             self.learning_modules[lm_counter].load_state_dict(lm_dict[lm_key])
             lm_counter = lm_counter + 1
 
-    def state_dict(self):
+    def state_dict(self) -> Memento:
         lm_dict = {
             i: module.state_dict() for i, module in enumerate(self.learning_modules)
         }
@@ -469,14 +482,14 @@ class MontyBase(Monty):
         return agent_obs[sensor_module_id]
 
     @property
-    def is_motor_only_step(self):
+    def is_motor_only_step(self) -> bool:
         return self.motor_system.motor_only_step
 
     @property
-    def is_done(self):
+    def is_done(self) -> bool:
         return self._is_done
 
-    def set_done(self):
+    def set_done(self) -> None:
         self._is_done = True
 
     @property

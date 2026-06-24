@@ -8,6 +8,7 @@
 # https://opensource.org/licenses/MIT.
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import json
 import unittest
@@ -17,7 +18,6 @@ import numpy as np
 import numpy.typing as npt
 import quaternion as qt
 import torch
-from scipy.spatial.transform import Rotation
 
 import tests.unit.frameworks.models.fakes.encoder_classes
 from tbp.monty.cmp import Message
@@ -30,8 +30,12 @@ from tbp.monty.frameworks.actions.actions import (
 )
 from tbp.monty.frameworks.agents import AgentID
 from tbp.monty.frameworks.models.buffer import BufferEncoder, FeatureAtLocationBuffer
+from tbp.monty.geometry import Rotation
 from tests.unit.frameworks.models.fakes.encoder_classes import (
     FakeClass,
+    FakeDataclass1,
+    FakeDataclass2,
+    FakeDataclass3,
     FakeMixin,
     FakeSubclass1,
     FakeSubclass2,
@@ -91,7 +95,6 @@ class FeatureAtLocationBufferPaddingTest(unittest.TestCase):
     """Tests for FeatureAtLocationBuffer focusing on padding and filtering behavior."""
 
     def setUp(self):
-        """Create a fresh buffer for each test."""
         self.buffer = FeatureAtLocationBuffer()
 
     def test_get_all_features_on_object_pads_with_nans(self):
@@ -169,7 +172,7 @@ class FeatureAtLocationBufferPaddingTest(unittest.TestCase):
         state_lm_1 = create_mock_message(
             sender_id="LM_0",
             sender_type="LM",
-            location=np.array([1.1, 2.1, 3.1]),
+            location=np.array([1.0, 2.0, 3.0]),
             on_object=True,
         )
         self.buffer.append([state_sm_1, state_lm_1])
@@ -203,9 +206,71 @@ class FeatureAtLocationBufferPaddingTest(unittest.TestCase):
             )
 
 
-class PadToTargetLengthTest(unittest.TestCase):
-    """Tests for FeatureAtLocationBuffer._pad_to_target_length method."""
+class GlobalLocationAveragingTest(unittest.TestCase):
+    """Tests that buffer stores the average location across all channels."""
 
+    def setUp(self):
+        self.buffer = FeatureAtLocationBuffer()
+
+    def test_last_location_is_average_of_sm_channels(self):
+        state_sm0 = create_mock_message(
+            sender_id="SM_0",
+            sender_type="SM",
+            location=np.array([1.0, 2.0, 3.0]),
+            on_object=True,
+        )
+        state_sm1 = create_mock_message(
+            sender_id="SM_1",
+            sender_type="SM",
+            location=np.array([3.0, 4.0, 5.0]),
+            on_object=True,
+        )
+        state_lm = create_mock_message(
+            sender_id="LM_0",
+            sender_type="LM",
+            location=np.array([100.0, 100.0, 100.0]),
+            on_object=True,
+        )
+        self.buffer.append([state_sm0, state_sm1, state_lm])
+        # Only SM locations are averaged; LM locations are excluded
+        expected_avg = (state_sm0.location + state_sm1.location) / 2
+        np.testing.assert_array_equal(self.buffer.last_location, expected_avg)
+
+    def test_last_location_single_channel(self):
+        state_a = create_mock_message(
+            sender_id="SM_0",
+            sender_type="SM",
+            location=np.array([1.0, 2.0, 3.0]),
+            on_object=True,
+        )
+        self.buffer.append([state_a])
+        np.testing.assert_array_equal(
+            self.buffer.last_location, np.array([1.0, 2.0, 3.0])
+        )
+
+    def test_stores_displacement_from_first_observation(self):
+        disp = np.array([0.1, 0.2, 0.3])
+        state_a = create_mock_message(
+            sender_id="SM_0",
+            sender_type="SM",
+            location=np.array([1.0, 2.0, 3.0]),
+            on_object=True,
+        )
+        state_a.displacement = {"displacement": disp.copy()}
+
+        state_b = create_mock_message(
+            sender_id="LM_0",
+            sender_type="LM",
+            location=np.array([1.0, 2.0, 3.0]),
+            on_object=True,
+        )
+        state_b.displacement = {"displacement": disp.copy()}
+
+        self.buffer.append([state_a, state_b])
+        np.testing.assert_array_almost_equal(self.buffer.current_displacement(), disp)
+
+
+class PadToTargetLengthTest(unittest.TestCase):
     def setUp(self):
         self.buffer = FeatureAtLocationBuffer()
         # Add 3 steps to the buffer
@@ -448,3 +513,42 @@ class BufferEncoderTest(unittest.TestCase):
                 json.loads(json.dumps(action, cls=BufferEncoder)),
                 json.loads(json.dumps(action, cls=ActionJSONEncoder)),
             )
+
+    def test_encodes_dataclass_instances_as_dicts_by_default(self) -> None:
+        dataclass = FakeDataclass1(data=[1, 2, 3])
+        self.assertDictEqual(
+            json.loads(json.dumps(dataclass, cls=BufferEncoder)),
+            dataclasses.asdict(dataclass),
+        )
+
+    def test_default_dataclass_encoding_overridden_by_registered_dataclass_encoder(
+        self,
+    ) -> None:
+        dataclass_1 = FakeDataclass1(data=[1, 2, 3])
+        dataclass_2 = FakeDataclass2(data=[1, 2, 3])
+        dataclass_2_sentinel = "CUSTOM_ENCODING"  # unittest.sentinel not serializable
+        BufferEncoder.register(FakeDataclass2, lambda _: dataclass_2_sentinel)
+        self.assertDictEqual(
+            json.loads(json.dumps(dataclass_1, cls=BufferEncoder)),
+            dataclasses.asdict(dataclass_1),
+        )
+        self.assertEqual(
+            json.loads(json.dumps(dataclass_2, cls=BufferEncoder)),
+            dataclass_2_sentinel,
+        )
+
+    def test_registered_encoder_for_inner_dataclass_is_invoked(self) -> None:
+        # This would fail if BufferEncoder used `dataclasses.asdict(obj)` to
+        # serialize dataclasses since `dataclasses.asdict` is recursive.
+        dataclass_1 = FakeDataclass1(data=[1, 2, 3])
+        dataclass_2 = FakeDataclass2(data=[1, 2, 3])
+        dataclass_2_sentinel = "CUSTOM_ENCODING"
+        dataclass_2_encoder = Mock(return_value=dataclass_2_sentinel)
+        BufferEncoder.register(FakeDataclass2, dataclass_2_encoder)
+        dataclass_3 = FakeDataclass3(dataclass_1=dataclass_1, dataclass_2=dataclass_2)
+
+        dct = json.loads(json.dumps(dataclass_3, cls=BufferEncoder))
+
+        self.assertEqual(dct["dataclass_1"], dataclasses.asdict(dataclass_1))
+        dataclass_2_encoder.assert_called_once_with(dataclass_2)
+        self.assertEqual(dct["dataclass_2"], dataclass_2_sentinel)

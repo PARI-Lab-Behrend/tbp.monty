@@ -11,9 +11,12 @@
 import pytest
 
 from tbp.monty.context import RuntimeContext
+from tbp.monty.frameworks.experiments.monty_experiment import MontyExperiment
+from tbp.monty.frameworks.models.abstract_monty_classes import LearningModule
 from tbp.monty.frameworks.models.motor_policies import (
     SurfacePolicyCurvatureInformed,
 )
+from tbp.monty.frameworks.models.motor_policy_selectors import SinglePolicySelector
 from tbp.monty.frameworks.models.motor_system import MotorSystem
 from tests import HYDRA_ROOT
 
@@ -31,7 +34,6 @@ import hydra
 import numpy as np
 import quaternion as qt
 from omegaconf import DictConfig
-from scipy.spatial.transform import Rotation
 
 from tbp.monty.cmp import Message
 from tbp.monty.frameworks.actions.actions import (
@@ -57,7 +59,7 @@ from tbp.monty.frameworks.models.motor_system_state import (
     AgentState,
     ProprioceptiveState,
 )
-from tbp.monty.frameworks.utils.transform_utils import numpy_to_scipy_quat
+from tbp.monty.geometry import Rotation
 
 
 class PolicyTest(unittest.TestCase):
@@ -256,7 +258,9 @@ class PolicyTest(unittest.TestCase):
                 "motor_system_config"
             ].policy_selector.policy.desired_object_distance
         )
-        exp = hydra.utils.instantiate(self.surf_poor_initial_view_cfg.experiment)
+        exp: MontyExperiment = hydra.utils.instantiate(
+            self.surf_poor_initial_view_cfg.experiment
+        )
         with exp:
             exp.experiment_mode = ExperimentMode.TRAIN
             exp.model.set_experiment_mode(exp.experiment_mode)
@@ -301,7 +305,9 @@ class PolicyTest(unittest.TestCase):
         Uses an action policy with high-stickiness and large saccade sizes, so
         that we are guaranteed to move off of the cube.
         """
-        exp = hydra.utils.instantiate(self.dist_fixed_action_cfg.experiment)
+        exp: MontyExperiment = hydra.utils.instantiate(
+            self.dist_fixed_action_cfg.experiment
+        )
         with exp:
             exp.experiment_mode = ExperimentMode.TRAIN
             exp.model.set_experiment_mode(exp.experiment_mode)
@@ -420,7 +426,9 @@ class PolicyTest(unittest.TestCase):
         Uses an action policy with high-stickiness, so that we are guaranteed to move
         off of the cube.
         """
-        exp = hydra.utils.instantiate(self.surf_fixed_action_cfg.experiment)
+        exp: MontyExperiment = hydra.utils.instantiate(
+            self.surf_fixed_action_cfg.experiment
+        )
         with exp:
             exp.experiment_mode = ExperimentMode.TRAIN
             exp.model.set_experiment_mode(exp.experiment_mode)
@@ -567,7 +575,9 @@ class PolicyTest(unittest.TestCase):
         Begins the episode by facing a cube whose surface is pointing away from
         the agent at an odd angle.
         """
-        exp = hydra.utils.instantiate(self.rotated_cube_view_cfg.experiment)
+        exp: MontyExperiment = hydra.utils.instantiate(
+            self.rotated_cube_view_cfg.experiment
+        )
         with exp:
             exp.experiment_mode = ExperimentMode.TRAIN
             exp.model.set_experiment_mode(exp.experiment_mode)
@@ -628,9 +638,10 @@ class PolicyTest(unittest.TestCase):
         policy: SurfacePolicyCurvatureInformed = hydra.utils.instantiate(
             self.policy_cfg_fragment
         )
-        motor_system = MotorSystem(policy)
+        policy_selector = SinglePolicySelector(policy)
+        motor_system = MotorSystem(policy_selector)
         policy.max_pc_bias_steps = 2
-        policy.pre_episode(motor_system)
+        policy.reset(motor_system)
 
         rng = np.random.RandomState(123)
         ctx = RuntimeContext(rng)
@@ -752,13 +763,14 @@ class PolicyTest(unittest.TestCase):
         policy: SurfacePolicyCurvatureInformed = hydra.utils.instantiate(
             self.policy_cfg_fragment
         )
-        motor_system = MotorSystem(policy)
+        policy_selector = SinglePolicySelector(policy)
+        motor_system = MotorSystem(policy_selector)
 
         # Overwrite min_general_steps default value so that we more quickly transition
         # into taking PC steps when testing this
         initial_min_general_steps = 1
         policy.min_general_steps = initial_min_general_steps
-        policy.pre_episode(motor_system)
+        policy.reset(motor_system)
 
         rng = np.random.RandomState(123)
         ctx = RuntimeContext(rng)
@@ -881,7 +893,7 @@ class PolicyTest(unittest.TestCase):
     def core_evaluate_compute_goal_for_target_loc(
         self,
         ctx: RuntimeContext,
-        lm,
+        lm: LearningModule,
         policy,
         object_orientation,
         target_location_on_object,
@@ -939,14 +951,15 @@ class PolicyTest(unittest.TestCase):
             sender_type="SM",
         )
 
-        lm.pre_episode(
+        lm.reset_stm()
+        lm.fixme_reset_ground_truth(
             primary_target=dict(
                 object="dummy_object",
                 quat_rotation=[1.0, 0.0, 0.0, 0.0],  # Filler value
             ),
         )
 
-        lm.matching_step(ctx, observations=[Message(**fake_percept_config)])
+        lm.matching_step(ctx, [Message(**fake_percept_config)])
 
         # GSG handles computing the motor goal
         motor_goal = lm.gsg._compute_goal_for_target_loc(
@@ -960,9 +973,7 @@ class PolicyTest(unittest.TestCase):
         target_loc_hab = set_agent_pose.location
         target_quat = set_agent_pose.rotation_quat
 
-        resulting_rot = Rotation.from_quat(
-            numpy_to_scipy_quat(np.array([target_quat.real] + list(target_quat.imag)))
-        )
+        resulting_rot = Rotation.from_quat(qt.as_float_array(target_quat))
 
         # As the agent faces "forward" along the negative z-axis, we use this vector
         # to visualize its orientation
@@ -982,9 +993,12 @@ class PolicyTest(unittest.TestCase):
         """
         lm, gsg_args = self.initialize_lm_with_gsg()
 
-        policy = hydra.utils.instantiate(self.policy_cfg_fragment)
-        motor_system = MotorSystem(policy)
-        policy.pre_episode(motor_system)
+        policy: SurfacePolicyCurvatureInformed = hydra.utils.instantiate(
+            self.policy_cfg_fragment
+        )
+        policy_selector = SinglePolicySelector(policy)
+        motor_system = MotorSystem(policy_selector)
+        policy.reset(motor_system)
 
         # The target displacement of the agent from the object; used to determine
         # the validity of the final agent location
