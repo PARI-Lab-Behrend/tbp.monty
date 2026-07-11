@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import habitat_sim
 import magnum as mn
@@ -73,6 +73,25 @@ from tbp.monty.math import QuaternionWXYZ, VectorXYZ
 DEFAULT_SCENE = "NONE"
 DEFAULT_PHYSICS_CONFIG = str(files(resources) / "default.physics_config.json")
 
+#: Habitat light setup key under which Monty-configured lights are registered.
+MONTY_LIGHTING_KEY = "monty_lights"
+
+#: Directional lights evenly surrounding the object, approximating ambient lighting
+#: while retaining some shading. Suitable for the `lights` argument of
+#: :class:`HabitatSim`. The intensity is calibrated so that mean object brightness
+#: roughly matches habitat's default light setup.
+AMBIENT_LIGHTS = [
+    {"vector": [x, y, z, 0.0], "color": [2.0, 2.0, 2.0], "model": "Global"}
+    for x, y, z in [
+        (1.0, 0.0, 0.0),
+        (-1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, -1.0, 0.0),
+        (0.0, 0.0, 1.0),
+        (0.0, 0.0, -1.0),
+    ]
+]
+
 #: Maps habitat-sim pre-configured primitive object types to semantic IDs
 PRIMITIVE_OBJECT_TYPES = {
     "capsule3DSolid": 101,
@@ -111,6 +130,16 @@ class HabitatSim(HabitatActuator, SimulatedObjectEnvironment):
             :class:`habitat_sim.utils.environments_download`.
         scene_id: Scene to use or None for empty environment.
         seed: Simulator seed to use.
+        lights: How objects are lit. None uses habitat's built-in light setup: five
+            directional lights, unevenly weighted so objects are lit mostly from the
+            front and above. An empty list renders objects unlit (flat-shaded): RGB
+            is the raw texture albedo with no shading at all, i.e. perfectly uniform
+            ambient illumination.
+            Otherwise, a list of light specifications, each with a `vector`
+            (x, y, z, w; w=0 for a directional light, w=1 for a point light), a
+            `color` (r, g, b, where values above 1 brighten the light), and a `model`
+            naming the frame the vector is expressed in ("Global", "Camera", or
+            "Object"). See :const:`AMBIENT_LIGHTS`.
     """
 
     def __init__(
@@ -119,6 +148,7 @@ class HabitatSim(HabitatActuator, SimulatedObjectEnvironment):
         data_path: str | Path | None = None,
         scene_id: str | None = None,
         seed: int = 42,
+        lights: Sequence[Mapping[str, Any]] | None = None,
     ):
         backend_config = habitat_sim.SimulatorConfiguration()
         backend_config.physics_config_file = DEFAULT_PHYSICS_CONFIG
@@ -128,6 +158,7 @@ class HabitatSim(HabitatActuator, SimulatedObjectEnvironment):
         backend_config.enable_physics = True
         backend_config.scene_id = scene_id or DEFAULT_SCENE
         backend_config.random_seed = seed
+
 
         self.np_rng = np.random.default_rng(seed)
 
@@ -200,6 +231,30 @@ class HabitatSim(HabitatActuator, SimulatedObjectEnvironment):
                 self.close()
                 raise ValueError(f"No valid habitat data found in {data_path}")
 
+        # Objects whose config sets `requires_lighting` are Phong-shaded and render
+        # black when there are no lights, so an empty light list is instead applied
+        # as flat (unlit) shading on the object template in `add_object`.
+        self._flat_shading = lights is not None and len(lights) == 0
+        self._light_setup_key = habitat_sim.gfx.DEFAULT_LIGHTING_KEY
+        if lights:
+            # Objects loaded from a dataset ignore updates to habitat's default light
+            # setup, so the lights are registered under a dedicated key that objects
+            # are explicitly bound to in `add_object`.
+            self._light_setup_key = MONTY_LIGHTING_KEY
+            self._sim.set_light_setup(
+                [
+                    habitat_sim.gfx.LightInfo(
+                        vector=mn.Vector4(*light["vector"]),
+                        color=mn.Vector3(*light["color"]),
+                        model=getattr(
+                            habitat_sim.gfx.LightPositionModel, light["model"]
+                        ),
+                    )
+                    for light in lights
+                ],
+                self._light_setup_key,
+            )
+
         for agent in self._agents:
             agent.initialize(self)
 
@@ -269,7 +324,17 @@ class HabitatSim(HabitatActuator, SimulatedObjectEnvironment):
             else:
                 obj_handle = scaled_tpl[0]
 
-        obj = rigid_mgr.add_object_by_template_handle(obj_handle)
+        if self._flat_shading:
+            flat_obj_handle = f"{obj_handle}_flat"
+            if not obj_mgr.get_template_handles(flat_obj_handle):
+                flat_tpl = obj_mgr.get_template_by_handle(obj_handle)
+                flat_tpl.force_flat_shading = True
+                obj_mgr.register_template(flat_tpl, flat_obj_handle)
+            obj_handle = flat_obj_handle
+
+        obj = rigid_mgr.add_object_by_template_handle(
+            obj_handle, light_setup_key=self._light_setup_key
+        )
 
         # Update pose
         obj.translation = mn.Vector3d(position)

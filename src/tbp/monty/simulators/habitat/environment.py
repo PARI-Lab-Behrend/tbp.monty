@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, is_dataclass
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from tbp.monty.frameworks.actions.actions import Action
 from tbp.monty.frameworks.environments.environment import (
@@ -91,6 +91,7 @@ class HabitatEnvironment(SimulatedObjectEnvironment):
         scene_id: Scene to use or None for empty environment.
         seed: Simulator seed to use.
         data_path: Path to the dataset.
+        lights: How objects are lit. See :class:`HabitatSim`.
     """
 
     def __init__(
@@ -100,6 +101,7 @@ class HabitatEnvironment(SimulatedObjectEnvironment):
         scene_id: str | None = None,
         seed: int = 42,
         data_path: str | Path | None = None,
+        lights: Sequence[Mapping[str, Any]] | None = None,
     ):
         super().__init__()
         # TODO: Change the configuration to configure multiple agents
@@ -119,6 +121,7 @@ class HabitatEnvironment(SimulatedObjectEnvironment):
             scene_id=scene_id,
             seed=seed,
             data_path=data_path,
+            lights=lights,
         )
 
         if objects is not None:
