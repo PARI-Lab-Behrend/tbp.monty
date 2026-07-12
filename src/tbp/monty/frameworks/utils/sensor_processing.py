@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+from functools import lru_cache
 from typing import Literal
 
 import numpy as np
@@ -251,23 +252,26 @@ def ltp_codes(
     return codes_pos, codes_neg
 
 
-def ror_encoding(codes: np.ndarray, n_neighbors: int) -> tuple[np.ndarray, int]:
-    """Encode codes using the ROR rotation-invariant encoding scheme.
+@lru_cache(maxsize=None)
+def _ror_look_up_table(n_neighbors: int) -> tuple[np.ndarray, int]:
+    """Build the ROR rotation-invariant lookup table for a neighborhood size.
+
+    The table depends only on `n_neighbors`, so it is built once and reused across
+    every call to :func:`ror_encoding` rather than being rebuilt per observation. The
+    returned array is read-only to keep the shared cache entry from being mutated by
+    a caller.
 
     Args:
-        codes: Codes to encode.
-        n_neighbors: Number of neighbors to consider in the circular neighborhood.
+        n_neighbors: Number of neighbors in the circular neighborhood.
 
     Returns:
-        Encoded codes and number of bins.
-
-    Raises:
-        ValueError: If the max value of codes exceeds the number of codes.
+        Lookup table mapping each raw code to its dense rotation-invariant bin index,
+        and the number of bins.
     """
     # Each code is an `n_neighbors`-bit pattern, so the value space spans every
     # integer in [0, 2**n_neighbors). `n_codes` is therefore the total number of
     # distinct raw codes the encoding must be able to handle.
-    n_codes = 2 ** n_neighbors
+    n_codes = 2**n_neighbors
     # `mask` has its lowest `n_neighbors` bits set to 1 (e.g. 0b1111 for 4
     # neighbors). Bitwise-ANDing with it discards any bits above bit n_neighbors-1,
     # keeping rotated values confined to the valid `n_neighbors`-bit range.
@@ -276,13 +280,6 @@ def ror_encoding(codes: np.ndarray, n_neighbors: int) -> tuple[np.ndarray, int]:
     # invariant) representative. Pre-allocated to length `n_codes` so each code's
     # canonical value can be stored at the index equal to the code itself.
     canonical = np.empty(n_codes, dtype=np.int32)
-
-    # Defensive check: a code value at or above `n_codes` would require more than
-    # `n_neighbors` bits and cannot be indexed into `canonical`/`lut`, so reject it.
-    if codes.max() >= n_codes:
-        raise ValueError(
-            f"Max code value {codes.max()} exceeds the number of codes {n_codes}"
-        )
 
     # Build the canonical form for every possible code. The ROR (Rotate to the
     # minimum) scheme defines two codes as equivalent if one is a circular bit
@@ -325,9 +322,37 @@ def ror_encoding(codes: np.ndarray, n_neighbors: int) -> tuple[np.ndarray, int]:
     # Compose the two mappings (raw code -> canonical value -> dense bin index)
     # into a single lookup table indexed directly by raw code value.
     look_up_table = np.array([remap[v] for v in canonical], dtype=np.int32)
+    look_up_table.flags.writeable = False
     # The number of distinct rotation-invariant classes is the number of output
     # bins the encoding produces.
     n_bins = len(unique_vals)
+
+    return look_up_table, n_bins
+
+
+def ror_encoding(codes: np.ndarray, n_neighbors: int) -> tuple[np.ndarray, int]:
+    """Encode codes using the ROR rotation-invariant encoding scheme.
+
+    Args:
+        codes: Codes to encode.
+        n_neighbors: Number of neighbors to consider in the circular neighborhood.
+
+    Returns:
+        Encoded codes and number of bins.
+
+    Raises:
+        ValueError: If the max value of codes exceeds the number of codes.
+    """
+    look_up_table, n_bins = _ror_look_up_table(n_neighbors)
+
+    # Defensive check: a code value at or above `n_codes` would require more than
+    # `n_neighbors` bits and cannot be indexed into the lookup table, so reject it.
+    n_codes = 2**n_neighbors
+    if codes.max() >= n_codes:
+        raise ValueError(
+            f"Max code value {codes.max()} exceeds the number of codes {n_codes}"
+        )
+
     # Apply the lookup table to the input codes via fancy indexing, translating
     # every raw code into its dense rotation-invariant bin index in one vectorized
     # operation.
@@ -370,12 +395,36 @@ def uniform_encoding(codes: np.ndarray, n_neighbors: int) -> tuple[np.ndarray, i
     Raises:
         ValueError: If the max value of ``codes`` exceeds the number of codes.
     """
-    p = n_neighbors
-    n_codes = 1 << p
+    look_up_table, n_bins = _uniform_look_up_table(n_neighbors)
+
+    n_codes = 1 << n_neighbors
     if codes.size and int(codes.max()) >= n_codes:
         raise ValueError(
             f"Max code value {int(codes.max())} exceeds the number of codes {n_codes}"
         )
+
+    encoded = look_up_table[codes.astype(np.int64, copy=False)]
+
+    return encoded, n_bins
+
+
+@lru_cache(maxsize=None)
+def _uniform_look_up_table(n_neighbors: int) -> tuple[np.ndarray, int]:
+    """Build the uniform-pattern lookup table for a neighborhood size.
+
+    The bin layout depends only on `n_neighbors` (see :func:`uniform_encoding` for
+    the layout), so it is built once and reused across observations. The returned
+    array is read-only to keep the shared cache entry from being mutated by a caller.
+
+    Args:
+        n_neighbors: Number of neighbors in the circular neighborhood.
+
+    Returns:
+        Lookup table mapping each raw code to its uniform-pattern bin index, and the
+        number of bins.
+    """
+    p = n_neighbors
+    n_codes = 1 << p
 
     n_bins = p * (p - 1) + 3
     all_zeros_bin = 0
@@ -405,9 +454,9 @@ def uniform_encoding(codes: np.ndarray, n_neighbors: int) -> tuple[np.ndarray, i
             run_start = int(np.argmax((bits == 1) & (preceding_bits == 0)))
             look_up_table[code] = 2 + (ones - 1) * p + run_start
 
-    encoded = look_up_table[codes.astype(np.int64, copy=False)]
+    look_up_table.flags.writeable = False
 
-    return encoded, n_bins
+    return look_up_table, n_bins
 
 
 def encode_ltp_codes(
