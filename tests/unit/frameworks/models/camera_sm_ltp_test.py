@@ -231,6 +231,66 @@ class CameraSMLtpTest(unittest.TestCase):
         assert ltp.shape == (2 * (8 * 7 + 3),)
         np.testing.assert_allclose(ltp.sum(), 1.0, atol=1e-3)
 
+    def test_ltp_config_is_required_when_ltp_rgb_feature_requested(self) -> None:
+        with pytest.raises(ValueError, match="ltp_config"):
+            CameraSM(
+                sensor_module_id="patch",
+                features=["on_object", "ltp_rgb"],
+            )
+
+    def test_process_extracts_per_channel_ltp_histograms(self) -> None:
+        obs = _make_on_object_observation(seed=7)
+        sm = CameraSM(
+            sensor_module_id="patch",
+            features=["on_object", "ltp_rgb"],
+            ltp_config=LTP_CONFIG,
+        )
+        sm.reset()
+        ctx = Mock()
+        ctx.rng = np.random.RandomState(0)
+        percept = sm.step(ctx, obs)
+
+        ltp_rgb = np.asarray(percept.non_morphological_features["ltp_rgb"])
+        # Three 72-bin ROR histograms (36 per sign), one per color channel.
+        assert ltp_rgb.shape == (3 * 72,)
+        # Each channel keeps its own L1 normalization so matching can compare the
+        # channels independently.
+        for channel in range(3):
+            channel_hist = ltp_rgb[channel * 72 : (channel + 1) * 72]
+            np.testing.assert_allclose(channel_hist.sum(), 1.0, atol=1e-3)
+
+        mask = (obs["semantic_3d"][:, 3] > 0).reshape(PATCH_SIZE, PATCH_SIZE)
+        expected = np.concatenate(
+            [
+                get_ltp_texture_feature_vector(
+                    obs["rgba"][:, :, channel], LTP_CONFIG, mask=mask
+                )
+                for channel in range(3)
+            ]
+        )
+        np.testing.assert_allclose(ltp_rgb, expected, rtol=0, atol=1e-9)
+
+    def test_ltp_rgb_differs_from_grayscale_ltp(self) -> None:
+        # The color channels carry texture that grayscale conversion averages away,
+        # so no channel's histogram should coincide with the grayscale one.
+        obs = _make_on_object_observation(seed=11)
+        sm = CameraSM(
+            sensor_module_id="patch",
+            features=["on_object", "ltp", "ltp_rgb"],
+            ltp_config=LTP_CONFIG,
+        )
+        sm.reset()
+        ctx = Mock()
+        ctx.rng = np.random.RandomState(0)
+        percept = sm.step(ctx, obs)
+
+        gray_hist = np.asarray(percept.non_morphological_features["ltp"])
+        ltp_rgb = np.asarray(percept.non_morphological_features["ltp_rgb"])
+        n_bins = gray_hist.shape[0]
+        for channel in range(3):
+            channel_hist = ltp_rgb[channel * n_bins : (channel + 1) * n_bins]
+            assert not np.allclose(channel_hist, gray_hist)
+
 
 if __name__ == "__main__":
     unittest.main()

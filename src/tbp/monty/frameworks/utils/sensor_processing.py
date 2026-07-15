@@ -41,6 +41,10 @@ LTPEncoding = Literal["ror", "uniform"]
 # uses it to decide whether the LTP texture signal is reliable enough to trust.
 LTP_PIXEL_STATS_KEY = "ltp_pixel_stats"
 
+# Number of color channels whose histograms are concatenated to form the `ltp_rgb`
+# feature.
+LTP_RGB_N_CHANNELS = 3
+
 def get_ltp_texture_feature_vector(
     image_array: np.ndarray,
     config,
@@ -97,6 +101,48 @@ def get_ltp_texture_feature_vector(
         raise ValueError(f"Unknown texture extraction method: {method_name}")
 
     return result
+
+def get_ltp_rgb_texture_feature_vector(
+    rgb_patch: np.ndarray,
+    config,
+    mask: np.ndarray | None = None,
+) -> np.ndarray:
+    """Build a per-color-channel LTP texture feature vector for an image patch.
+
+    The R, G and B channels are each histogrammed independently with the same
+    ``config``, and their histograms are concatenated. Unlike the multi-scale case,
+    the concatenation is *not* renormalized: every channel keeps its own L1
+    normalization, so the channels contribute equally to the Hellinger distance
+    computed over the concatenation during matching. That distance works out to the
+    root-mean-square of the per-channel distances, so the channels are effectively
+    compared independently and then pooled.
+
+    Args:
+        rgb_patch: Image patch of shape ``(H, W, C)`` with ``C >= 3``. Only the
+            first three channels are used, so an RGBA patch may be passed directly.
+        config: Texture-extraction config, as accepted by
+            :func:`get_ltp_texture_feature_vector`.
+        mask: Optional boolean array of shape ``(H, W)`` selecting which pixels
+            contribute to the histograms. The same mask is applied to every channel.
+
+    Returns:
+        The concatenated per-channel texture histograms, ordered R, G, B.
+
+    Raises:
+        ValueError: If ``rgb_patch`` does not have at least three color channels.
+    """
+    if rgb_patch.ndim != 3 or rgb_patch.shape[-1] < LTP_RGB_N_CHANNELS:
+        raise ValueError(
+            "`rgb_patch` must have shape (H, W, C) with at least "
+            f"{LTP_RGB_N_CHANNELS} color channels, got {rgb_patch.shape}."
+        )
+
+    channel_hists = [
+        get_ltp_texture_feature_vector(rgb_patch[:, :, channel], config, mask=mask)
+        for channel in range(LTP_RGB_N_CHANNELS)
+    ]
+
+    return np.concatenate(channel_hists).astype(np.float32, copy=False)
 
 def local_ternary_pattern_and_hist(
     gray_patch: np.ndarray,

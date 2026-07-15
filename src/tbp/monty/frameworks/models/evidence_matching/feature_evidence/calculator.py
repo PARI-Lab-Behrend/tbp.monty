@@ -84,7 +84,17 @@ class DefaultFeatureEvidenceCalculator:
     )
     CIRCULAR_FEATURES = frozenset({"hsv"})
     CATEGORICAL_FEATURES = frozenset({"object_id"})
-    HISTOGRAM_FEATURES = frozenset({"ltp"})
+    # `ltp_rgb` stores one histogram per color channel back to back. It is scored as a
+    # single histogram rather than channel by channel because the Bhattacharyya
+    # coefficient is additive across bins and the channels contribute equally many
+    # pixels: the Hellinger distance over the concatenation is exactly the
+    # root-mean-square of the three per-channel Hellinger distances, so the channels
+    # are already compared independently and then pooled.
+    HISTOGRAM_FEATURES = frozenset({"ltp", "ltp_rgb"})
+    # Histogram features subject to the patch-intensity reliability gate below. Only
+    # the grayscale `ltp` qualifies: the gate is defined in terms of the grayscale
+    # patch statistics, which `ltp_rgb` does not report.
+    GATED_HISTOGRAM_FEATURES = frozenset({"ltp"})
     CIRCULAR_RANGE = 1
 
     # When the patch that produced an LTP histogram is dark (low mean pixel
@@ -187,13 +197,14 @@ class DefaultFeatureEvidenceCalculator:
                     stored != query_feature
                 )
             elif feature in cls.HISTOGRAM_FEATURES:
-                # The LTP texture signal is unreliable when the observed patch is
-                # too dark and uniform, so drop its weight to 0 for this
+                # The grayscale LTP texture signal is unreliable when the observed
+                # patch is too dark and uniform, so drop its weight to 0 for this
                 # observation rather than using the configured value.
+                unreliable = feature in cls.GATED_HISTOGRAM_FEATURES and (
+                    cls._is_unreliable_ltp_observation(channel_query_features)
+                )
                 feature_weight_list[scored_start:scored_end] = (
-                    0.0
-                    if cls._is_unreliable_ltp_observation(channel_query_features)
-                    else channel_feature_weights[feature]
+                    0.0 if unreliable else channel_feature_weights[feature]
                 )
                 feature_differences[:, scored_start] = cls._hellinger_distances(
                     channel_feature_array, stored_start, stored_end, query_feature

@@ -471,6 +471,59 @@ class DefaultFeatureEvidenceCalculatorTest(unittest.TestCase):
         )
         np.testing.assert_array_equal(evidence, [0.0])
 
+    def test_rgb_histogram_distance_decomposes_over_color_channels(self) -> None:
+        # `ltp_rgb` stores one equally-sized histogram per color channel and is scored
+        # with a single Hellinger distance over the concatenation. Because the
+        # Bhattacharyya coefficient is additive over bins, that distance is exactly the
+        # root-mean-square of the per-channel Hellinger distances: the channels are
+        # compared independently and then pooled, so a node that matches the query on
+        # red and green is not penalized for them.
+        red_query = [0.25, 0.25, 0.25, 0.25]
+        green_query = [0.10, 0.20, 0.30, 0.40]
+        blue_query = [0.40, 0.30, 0.20, 0.10]
+        query_hist = [*red_query, *green_query, *blue_query]
+        # Node 0 matches on every channel; node 1 matches on red and green but has all
+        # of its blue mass in the query's smallest bin.
+        stored_blue = [0.0, 0.0, 0.0, 1.0]
+        stored = np.array(
+            [query_hist, [*red_query, *green_query, *stored_blue]],
+            dtype=np.float64,
+        )
+        tolerance = 0.5
+        evidence = self._calculate(
+            stored=stored,
+            query={"ltp_rgb": query_hist},
+            tolerances={"ltp_rgb": tolerance},
+            weights={"ltp_rgb": 1.0},
+            feature_order=["ltp_rgb"],
+        )
+
+        blue_dist = cv2.compareHist(
+            np.array(stored_blue, dtype=np.float32),
+            np.array(blue_query, dtype=np.float32),
+            cv2.HISTCMP_BHATTACHARYYA,
+        )
+        # Red and green are exact matches (distance 0), so the pooled distance is the
+        # blue distance divided by sqrt(3).
+        pooled_dist = np.sqrt((0.0 + 0.0 + blue_dist**2) / 3)
+        expected = [1.0, max(0.0, 1.0 - pooled_dist / tolerance)]
+        np.testing.assert_allclose(evidence, expected, atol=1e-6)
+
+    def test_rgb_histogram_ignores_grayscale_reliability_gate(self) -> None:
+        # The dark/uniform-patch gate is defined on grayscale patch statistics and
+        # does not apply to `ltp_rgb`: even with unreliable stats present, the RGB
+        # histogram keeps its configured weight.
+        channel_hist = [0.25, 0.25, 0.25, 0.25]
+        rgb_hist = channel_hist * 3
+        evidence = self._calculate(
+            stored=np.array([rgb_hist], dtype=np.float64),
+            query={"ltp_rgb": rgb_hist, LTP_PIXEL_STATS_KEY: [5.0, 5.0]},
+            tolerances={"ltp_rgb": 0.5},
+            weights={"ltp_rgb": 20.0},
+            feature_order=["ltp_rgb"],
+        )
+        np.testing.assert_allclose(evidence, [1.0], atol=1e-9)
+
 
 if __name__ == "__main__":
     unittest.main()
