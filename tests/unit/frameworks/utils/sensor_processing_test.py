@@ -565,7 +565,7 @@ class RorEncodingTest(unittest.TestCase):
 
 
 def uniform_bin_reference(code: int, p: int) -> int:
-    """Independent reference for the rotation-variant uniform bin of a code.
+    """Independent reference for the rotation-invariant uniform bin of a code.
 
     Mirrors the documented bin layout of ``uniform_encoding`` but is written
     from scratch with plain Python loops so it does not share logic with the
@@ -581,33 +581,28 @@ def uniform_bin_reference(code: int, p: int) -> int:
     bits = [(code >> i) & 1 for i in range(p)]
     transitions = sum(bits[i] != bits[(i + 1) % p] for i in range(p))
     ones = sum(bits)
-    n_bins = p * (p - 1) + 3
+    n_bins = p + 2
     if transitions > 2:
         return n_bins - 1
-    if ones == 0:
-        return 0
-    if ones == p:
-        return 1
-    run_start = next(
-        i for i in range(p) if bits[i] == 1 and bits[(i - 1) % p] == 0
-    )
-    return 2 + (ones - 1) * p + run_start
+    # Uniform patterns are rotation invariant: their bin is their number of ones.
+    return ones
 
 
 def uniform_pattern_count(p: int) -> int:
-    """Number of distinct uniform patterns for ``p`` bits (all-0 and all-1 included).
+    """Number of distinct rotation-invariant uniform classes for ``p`` bits.
 
-    A uniform pattern has at most two circular bit transitions. There are
-    ``p * (p - 1)`` partial patterns (a run of ``1..p-1`` ones starting at any
-    of ``p`` positions) plus the all-zeros and all-ones patterns.
+    A uniform pattern has at most two circular bit transitions, i.e. a single
+    run of ones. Under rotation invariance every such run collapses onto its
+    number of ones, which ranges over ``0..p``, giving ``p + 1`` classes
+    (including the all-zeros and all-ones patterns).
 
     Args:
         p: Bit width of the code.
 
     Returns:
-        The count of uniform patterns.
+        The count of rotation-invariant uniform classes.
     """
-    return p * (p - 1) + 2
+    return p + 1
 
 
 class UniformEncodingTest(unittest.TestCase):
@@ -616,7 +611,7 @@ class UniformEncodingTest(unittest.TestCase):
             with self.subTest(n_neighbors=n_neighbors):
                 codes = np.arange(1 << n_neighbors, dtype=np.uint32)
                 _, n_bins = uniform_encoding(codes, n_neighbors=n_neighbors)
-                assert n_bins == n_neighbors * (n_neighbors - 1) + 3
+                assert n_bins == n_neighbors + 2
 
     def test_matches_independent_reference(self):
         for n_neighbors in (4, 8):
@@ -638,8 +633,8 @@ class UniformEncodingTest(unittest.TestCase):
         n_neighbors = 8
         codes = np.array([0, (1 << n_neighbors) - 1], dtype=np.uint32)
         encoded, _ = uniform_encoding(codes, n_neighbors=n_neighbors)
-        assert encoded[0] == 0  # all zeros
-        assert encoded[1] == 1  # all ones
+        assert encoded[0] == 0  # all zeros -> zero ones
+        assert encoded[1] == n_neighbors  # all ones -> p ones
 
     def test_non_uniform_codes_share_the_last_bin(self):
         # Codes with more than two circular transitions are non-uniform and all
@@ -649,21 +644,23 @@ class UniformEncodingTest(unittest.TestCase):
         encoded, n_bins = uniform_encoding(non_uniform, n_neighbors=n_neighbors)
         npt.assert_array_equal(encoded, np.full(non_uniform.shape, n_bins - 1))
 
-    def test_rotation_changes_bin(self):
-        # Unlike ROR, uniform encoding is orientation-sensitive: rotating a
-        # partial-uniform pattern shifts its run start and therefore its bin.
+    def test_rotation_does_not_change_bin(self):
+        # Like ROR, uniform encoding is rotation invariant: rotating a
+        # partial-uniform pattern preserves its number of ones and therefore its
+        # bin.
         n_neighbors = 8
         code = 0b00000011  # run of two ones starting at position 0
         rotated = rotate_right(code, n_neighbors)  # run now starts at position 7
         encoded, _ = uniform_encoding(
             np.array([code, rotated], dtype=np.uint32), n_neighbors=n_neighbors
         )
-        assert encoded[0] != encoded[1]
+        assert encoded[0] == encoded[1]
 
     def test_distinct_uniform_patterns_get_distinct_bins(self):
-        # Every uniform pattern maps to its own bin; only non-uniform codes are
-        # merged. So the number of distinct bins occupied equals the number of
-        # uniform patterns plus one (the shared non-uniform bin).
+        # Each rotation-invariant uniform class (number of ones) maps to its own
+        # bin; only non-uniform codes are merged. So the number of distinct bins
+        # occupied equals the number of uniform classes plus one (the shared
+        # non-uniform bin).
         for n_neighbors in (4, 8):
             with self.subTest(n_neighbors=n_neighbors):
                 all_codes = np.arange(1 << n_neighbors, dtype=np.uint32)
@@ -782,7 +779,7 @@ class LocalTernaryPatternAndHistTest(unittest.TestCase):
                 hist = local_ternary_pattern_and_hist(
                     patch, n_neighbors=n_neighbors, method="uniform"
                 )
-                expected_bins = n_neighbors * (n_neighbors - 1) + 3
+                expected_bins = n_neighbors + 2
                 assert hist.shape == (2 * expected_bins,)
 
     def test_uniform_histogram_is_non_negative_and_normalized(self):
@@ -901,11 +898,11 @@ class LocalTernaryPatternAndHistTest(unittest.TestCase):
                 )
                 npt.assert_allclose(ror, ror_rotated, atol=1e-6)
 
-    def test_uniform_histogram_is_orientation_sensitive(self):
-        # Contrast with ROR: the uniform encoding preserves the run-start
-        # position, so rotating an oriented texture by 90 degrees changes the
-        # histogram. This guards against the encodings silently collapsing into
-        # the same (rotation-invariant) behavior.
+    def test_uniform_histogram_is_invariant_to_90_degree_rotation(self):
+        # Like ROR, the uniform encoding is rotation invariant: a 90-degree
+        # image rotation maps the circular neighbor sampling onto a two-step
+        # cyclic shift of the bit pattern (with n_neighbors=8), which preserves
+        # each uniform pattern's number of ones and therefore its bin.
         patch = self._oriented_texture_patch()
         rotated = np.rot90(patch)
         uniform = local_ternary_pattern_and_hist(
@@ -914,7 +911,7 @@ class LocalTernaryPatternAndHistTest(unittest.TestCase):
         uniform_rotated = local_ternary_pattern_and_hist(
             rotated, n_neighbors=8, method="uniform"
         )
-        assert not np.allclose(uniform, uniform_rotated, atol=1e-3)
+        npt.assert_allclose(uniform, uniform_rotated, atol=1e-6)
 
 
 def _ltp_config(n_neighbors=8, radius=1.0, threshold=5.0, method=None):

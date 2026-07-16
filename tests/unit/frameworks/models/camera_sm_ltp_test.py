@@ -216,7 +216,7 @@ class CameraSMLtpTest(unittest.TestCase):
         assert not np.allclose(expected_masked, expected_unmasked)
 
     def test_process_uniform_histogram_has_expected_length(self) -> None:
-        # n_neighbors=8 -> p*(p-1)+3 = 59 uniform bins per sign, concatenated.
+        # n_neighbors=8 -> p+2 = 10 uniform bins per sign, concatenated.
         sm = CameraSM(
             sensor_module_id="patch",
             features=["on_object", "ltp"],
@@ -228,7 +228,7 @@ class CameraSMLtpTest(unittest.TestCase):
         percept = sm.step(ctx, _make_on_object_observation())
 
         ltp = np.asarray(percept.non_morphological_features["ltp"])
-        assert ltp.shape == (2 * (8 * 7 + 3),)
+        assert ltp.shape == (2 * (8 + 2),)
         np.testing.assert_allclose(ltp.sum(), 1.0, atol=1e-3)
 
     def test_ltp_config_is_required_when_ltp_rgb_feature_requested(self) -> None:

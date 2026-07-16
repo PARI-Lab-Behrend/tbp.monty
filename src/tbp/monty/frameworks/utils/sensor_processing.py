@@ -32,7 +32,8 @@ FLAT_THRESHOLD = 0.001
 
 # Supported encoding schemes that map raw LTP codes onto histogram bins.
 #   "ror": rotation-invariant (rotate-to-minimum); orientation is discarded.
-#   "uniform": rotation-variant uniform patterns; orientation is preserved.
+#   "uniform": rotation-invariant uniform patterns (ROR applied); each uniform
+#              pattern collapses onto its number of ones.
 LTPEncoding = Literal["ror", "uniform"]
 
 # Key under which the sensor module reports the grayscale intensity statistics
@@ -168,8 +169,8 @@ def local_ternary_pattern_and_hist(
         radius: Radius of the neighborhood in pixels.
         threshold: Threshold for the local ternary pattern.
         method: Encoding scheme mapping raw codes to histogram bins, either
-            ``"ror"`` (rotation invariant) or ``"uniform"`` (rotation variant,
-            orientation preserving).
+            ``"ror"`` (rotation invariant) or ``"uniform"`` (rotation-invariant
+            uniform patterns).
         mask: Optional boolean array, same shape as ``gray_patch``, selecting
             which pixels contribute to the histogram. Pixels where the mask is
             ``False`` (e.g. off-object background) are excluded. The LTP codes
@@ -408,7 +409,7 @@ def ror_encoding(codes: np.ndarray, n_neighbors: int) -> tuple[np.ndarray, int]:
 
 
 def uniform_encoding(codes: np.ndarray, n_neighbors: int) -> tuple[np.ndarray, int]:
-    """Encode codes using a rotation-variant uniform-pattern scheme.
+    """Encode codes using the rotation-invariant uniform-pattern scheme.
 
     A code is "uniform" if its circular bit pattern contains at most two
     0<->1 transitions, i.e. it consists of a single contiguous (possibly
@@ -416,20 +417,20 @@ def uniform_encoding(codes: np.ndarray, n_neighbors: int) -> tuple[np.ndarray, i
     primitives (spots, flat regions, edges, corners); all non-uniform patterns
     are lumped into a single bin.
 
-    Unlike :func:`ror_encoding`, this scheme is *not* rotation invariant: each
-    uniform pattern is identified by both its number of ones and the position
-    where its run of ones starts, so orientation information is preserved. The
-    bin layout is fixed for a given ``n_neighbors`` (it is built over every
-    possible code, independent of the input), which keeps histograms produced
-    from different patches mutually comparable.
+    Like :func:`ror_encoding`, this scheme is rotation invariant: it applies the
+    ROR (rotate-to-minimum) equivalence so that a uniform pattern and every
+    circular rotation of it map to the same bin. Because a uniform pattern is a
+    single run of ones, its rotation-invariant class is fully determined by the
+    number of ones it contains, so the run-start position is discarded. The bin
+    layout is fixed for a given ``n_neighbors`` (it is built over every possible
+    code, independent of the input), which keeps histograms produced from
+    different patches mutually comparable.
 
     For ``p = n_neighbors`` the bins are laid out as:
-        - bin 0: the all-zeros pattern,
-        - bin 1: the all-ones pattern,
-        - bins ``2 .. p*(p-1)+1``: partial uniform patterns, indexed by
-          ``2 + (ones - 1) * p + run_start``,
-        - bin ``p*(p-1)+2`` (the last bin): all non-uniform patterns,
-    for a total of ``p*(p-1) + 3`` bins.
+        - bins ``0 .. p``: uniform patterns, indexed by their number of ones
+          (bin 0 is all-zeros, bin ``p`` is all-ones),
+        - bin ``p + 1`` (the last bin): all non-uniform patterns,
+    for a total of ``p + 2`` bins.
 
     Args:
         codes: Codes to encode. Values must be in ``[0, 2**n_neighbors)``.
@@ -472,9 +473,10 @@ def _uniform_look_up_table(n_neighbors: int) -> tuple[np.ndarray, int]:
     p = n_neighbors
     n_codes = 1 << p
 
-    n_bins = p * (p - 1) + 3
-    all_zeros_bin = 0
-    all_ones_bin = 1
+    # Uniform patterns collapse (via ROR rotation invariance) onto their number
+    # of ones, which ranges over 0..p, giving p+1 uniform bins. All non-uniform
+    # patterns share the final bin.
+    n_bins = p + 2
     non_uniform_bin = n_bins - 1
 
     bit_positions = np.arange(p)
@@ -488,17 +490,13 @@ def _uniform_look_up_table(n_neighbors: int) -> tuple[np.ndarray, int]:
         ones = int(bits.sum())
         if transitions > 2:
             look_up_table[code] = non_uniform_bin
-        elif ones == 0:
-            look_up_table[code] = all_zeros_bin
-        elif ones == p:
-            look_up_table[code] = all_ones_bin
         else:
-            # The run of ones starts at the unique index whose bit is 1 while its
-            # (circular) predecessor is 0. This is well defined for uniform
-            # patterns and stays correct when the run wraps past index 0.
-            preceding_bits = np.roll(bits, 1)
-            run_start = int(np.argmax((bits == 1) & (preceding_bits == 0)))
-            look_up_table[code] = 2 + (ones - 1) * p + run_start
+            # A uniform pattern is a single run of ones, so every circular
+            # rotation of it (and thus every run-start position) has the same
+            # number of ones. Indexing by the number of ones makes the encoding
+            # rotation invariant, matching the ROR equivalence used by
+            # `ror_encoding`.
+            look_up_table[code] = ones
 
     look_up_table.flags.writeable = False
 
@@ -514,7 +512,7 @@ def encode_ltp_codes(
         codes: Raw LTP codes.
         n_neighbors: Number of neighbors in the circular neighborhood.
         method: Either ``"ror"`` (rotation invariant) or ``"uniform"``
-            (rotation variant, orientation preserving).
+            (rotation-invariant uniform patterns).
 
     Returns:
         Encoded codes (same shape as ``codes``) and the number of bins.
