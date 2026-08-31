@@ -1,0 +1,32 @@
+# @package _global_
+
+# Top arm of the ltp-tolerance sweep (t027 / t040 / t050). See the t027 config for why
+# the tolerance is calibrated against the evidence gap rather than a distance threshold.
+# 0.50 sits essentially at the offline optimum for the surf_pre_training_11retextured_obj_ltp
+# model: the evidence gap peaks at ~0.52 (d' keeps creeping up to ~0.66), and only ~3% of
+# same-object nodes are clipped to zero evidence.
+#
+# The offline optimum is measured on distances between arbitrary node pairs on the same
+# object, which is a looser positive class than the one matching actually scores (a live
+# observation against the node at the hypothesized location). That biases the measured
+# same-object distances upward, so the true optimum may sit below 0.52 -- which is the
+# reason this is an eval sweep rather than a single config change.
+#
+# Treat the offline optimum as the pre-registered choice and this sweep as a check on
+# whether it wins. Picking the best-scoring arm on the eval set and then reporting that
+# arm's accuracy as the headline number is test-set model selection, and the repo already
+# carries a dozen-odd ltp tolerance/weight variants scored on this same eval set.
+
+defaults:
+  - randrot_11retexturedobj_surf_agent_ltp
+
+experiment:
+  config:
+    monty_config:
+      learning_modules:
+        learning_module_0:
+          tolerances:
+            patch:
+              ltp: 0.50
+    logging:
+      run_name: randrot_11retexturedobj_surf_agent_ltp_t050

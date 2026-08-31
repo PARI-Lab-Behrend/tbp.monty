@@ -1,0 +1,34 @@
+# @package _global_
+
+# Ambient 11retex HSV+LTP eval arm. Same model/sensor as the LTP-only arm, but the
+# learning module keeps HSV weighted [2, 0.5, 0.5] AND weights ltp at 2.0. Paired
+# against the HSV-only baseline (pval_amb_11retex_surf_agent_noltp) this tests whether
+# LTP adds signal on top of color. 20 random rotations, seed 42.
+
+defaults:
+  - /monty: evidencegraph_exp1000_emin_t3_tot2500
+  - /monty/motor_system_config: surface_curvature_informed_goal1
+  - /monty/learning_module: evidence_1lm_nn5_dod0025_ltp_hsv
+  - /monty/sensor_module: camera_surf_rgba_ltp
+  - /monty/connectivity: 1lm_1sm
+  - /environment: retextured_surf_agent_semantics0_amb
+  - /env_interface: eval_retexturedobj_random
+  - /env_interface/transform: missing_depthto3d_sensor2_semantic0_clip
+  - /logging: basic_warning_wandb_monty_runs
+
+experiment:
+  _target_: tbp.monty.frameworks.experiments.object_recognition_experiments.MontyObjectRecognitionExperiment
+  config:
+    show_sensor_output: false
+    max_train_steps: 1000
+    max_eval_steps: 500
+    max_total_steps: 6000
+    n_train_epochs: 3
+    model_name_or_path: ${constants.retextured_pretrained_dir}/amb_surf_pre_training_11retextured_obj_ltp/pretrained/
+    n_eval_epochs: 20
+    min_lms_match: 1
+    seed: 42
+    supervised_lm_ids: []
+    python_log_level: DEBUG
+    logging:
+      run_name: pval_amb_11retex_surf_agent_hsvltp
