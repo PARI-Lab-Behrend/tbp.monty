@@ -1,6 +1,6 @@
 experiment:
   config:
-    do_eval: true
+    do_eval: false
     do_train: false
     monty_config:
       monty_class: ${monty.class:tbp.monty.frameworks.models.evidence_matching.model.MontyForEvidenceGraphMatching}
@@ -41,10 +41,12 @@ experiment:
               hsv: ${np.array:[2, 0.5, 0.5]}
               pose_vectors: ${np.ones:3}
               principal_curvatures_log: ${np.ones:2}
+              ltp: 2.0
           tolerances:
             patch:
               hsv: ${np.array:[0.1, 0.2, 0.2]}
               principal_curvatures_log: ${np.ones:2}
+              ltp: 0.5
           max_match_distance: 0.01
           x_percent_threshold: 20
           evidence_threshold_config: all
@@ -78,11 +80,19 @@ experiment:
           - mean_curvature
           - gaussian_curvature_sc
           - mean_curvature_sc
-          save_raw_obs: true
+          - ltp
+          ltp_config:
+            texture_extraction:
+              local_ternary_pattern:
+                n_neighbors: 8
+                radius: 1.0
+                threshold: 5.0
+                method: uniform
+          save_raw_obs: false
         sensor_module_1:
           _target_: tbp.monty.frameworks.models.sensor_modules.Probe
           sensor_module_id: view_finder
-          save_raw_obs: true
+          save_raw_obs: false
       sm_to_agent_dict:
         patch: agent_id_0
         view_finder: agent_id_0
@@ -90,98 +100,6 @@ experiment:
       - - 0
       lm_to_lm_matrix: null
       lm_to_lm_vote_matrix: null
-    environment:
-      env_init_args:
-        objects:
-        - name: coneSolid
-          position:
-          - 0.0
-          - 1.5
-          - -0.1
-        scene_id: null
-        seed: 42
-        data_path: ${path.expanduser:${oc.env:MONTY_DATA}/retextured_ycb}
-        agents:
-          agent_args:
-            agent_id: agent_id_0
-            sensor_ids:
-            - patch
-            - view_finder
-            height: 0.0
-            position:
-            - 0.0
-            - 1.5
-            - 0.1
-            resolutions:
-            - - 64
-              - 64
-            - - 64
-              - 64
-            positions:
-            - - 0.0
-              - 0.0
-              - 0.0
-            - - 0.0
-              - 0.0
-              - 0.03
-            rotations:
-            - - 1.0
-              - 0.0
-              - 0.0
-              - 0.0
-            - - 1.0
-              - 0.0
-              - 0.0
-              - 0.0
-            semantics:
-            - false
-            - false
-            zooms:
-            - 10.0
-            - 1.0
-            action_space_type: surface_agent
-          agent_type: ${monty.class:tbp.monty.simulators.habitat.MultiSensorAgent}
-      env_init_func: ${monty.class:tbp.monty.simulators.habitat.environment.HabitatEnvironment}
-      transform:
-      - _target_: tbp.monty.frameworks.environment_utils.transforms.MissingToMaxDepth
-        agent_id: agent_id_0
-        max_depth: 1
-      - _target_: tbp.monty.frameworks.environment_utils.transforms.DepthTo3DLocations
-        agent_id: agent_id_0
-        sensor_ids:
-        - patch
-        - view_finder
-        resolutions:
-        - - 64
-          - 64
-        - - 64
-          - 64
-        world_coord: true
-        zooms:
-        - 10.0
-        - 1.0
-        get_all_points: true
-        use_semantic_sensor: false
-        depth_clip_sensors:
-        - 0
-        clip_value: 0.05
-    eval_env_interface_args:
-      parent_to_child_mapping: null
-      object_names:
-      - baseball
-      - porous_baseball
-      - matted_baseball
-      - flecked_baseball
-      - softball
-      - blotchy_softball
-      - woven_softball
-      - zigzagged_softball
-      - mug
-      - bowl
-      - banana
-      object_init_sampler:
-        _target_: tbp.monty.frameworks.environments.object_init_samplers.RandomRotation
-    eval_env_interface_class: ${monty.class:tbp.monty.experiment.environment.OneObjectPerEpisodeInterface}
     logging:
       monty_log_level: BASIC
       monty_handlers:
@@ -197,19 +115,33 @@ experiment:
       wandb_id:
         _target_: wandb.util.generate_id
       wandb_group: benchmark_experiments
-      run_name: randrot_11retexturedobj_surf_agent_nohsv
+      run_name: plot_ltp_distances_surf_multiscale
     show_sensor_output: false
     max_train_steps: 1000
     max_eval_steps: 500
     max_total_steps: 6000
-    n_train_epochs: 3
-    model_name_or_path: ${constants.retextured_pretrained_dir}/surf_pre_training_11retextured_obj/pretrained/
+    n_train_epochs: 1
     n_eval_epochs: 1
+    model_name_or_path: ${constants.retextured_pretrained_dir}/surf_pre_training_11retextured_obj_ltp_multiscale/pretrained/
     min_lms_match: 1
     seed: 42
     supervised_lm_ids: []
-    python_log_level: DEBUG
-  _target_: tbp.monty.frameworks.experiments.object_recognition_experiments.MontyObjectRecognitionExperiment
+    python_log_level: INFO
+    ltp_distance:
+      metrics:
+      - chisq
+      - hellinger
+      - kldiv
+      - jensen_shannon
+      feature: ltp
+      lm_id: 0
+      max_nodes_per_object: 300
+      n_queries: 400
+      xmax: 1
+      group_regex: (baseball|softball)$
+      bins: 60
+      seed: 42
+  _target_: tbp.monty.frameworks.experiments.analysis_experiments.MontyLTPDistanceExperiment
 episodes: all
 num_parallel: 16
 print_cfg: false

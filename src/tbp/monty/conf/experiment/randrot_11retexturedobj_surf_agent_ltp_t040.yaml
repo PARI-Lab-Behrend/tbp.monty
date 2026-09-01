@@ -1,0 +1,20 @@
+# @package _global_
+
+# Middle arm of the ltp-tolerance sweep (t027 / t040 / t050). See the t027 config for
+# why the tolerance is calibrated against the evidence gap rather than a distance
+# threshold. At 0.40 the evidence gap is within ~5% of its maximum and only ~8% of
+# same-object nodes are clipped to zero evidence (vs ~23% at 0.27).
+
+defaults:
+  - randrot_11retexturedobj_surf_agent_ltp
+
+experiment:
+  config:
+    monty_config:
+      learning_modules:
+        learning_module_0:
+          tolerances:
+            patch:
+              ltp: 0.40
+    logging:
+      run_name: randrot_11retexturedobj_surf_agent_ltp_t040

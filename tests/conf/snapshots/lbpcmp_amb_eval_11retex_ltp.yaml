@@ -41,10 +41,12 @@ experiment:
               hsv: ${np.array:[2, 0.5, 0.5]}
               pose_vectors: ${np.ones:3}
               principal_curvatures_log: ${np.ones:2}
+              ltp: 2.0
           tolerances:
             patch:
               hsv: ${np.array:[0.1, 0.2, 0.2]}
               principal_curvatures_log: ${np.ones:2}
+              ltp: 0.5
           max_match_distance: 0.01
           x_percent_threshold: 20
           evidence_threshold_config: all
@@ -78,11 +80,19 @@ experiment:
           - mean_curvature
           - gaussian_curvature_sc
           - mean_curvature_sc
-          save_raw_obs: true
+          - ltp
+          ltp_config:
+            texture_extraction:
+              local_ternary_pattern:
+                n_neighbors: 8
+                radius: 1.0
+                threshold: 5.0
+                method: ror
+          save_raw_obs: false
         sensor_module_1:
           _target_: tbp.monty.frameworks.models.sensor_modules.Probe
           sensor_module_id: view_finder
-          save_raw_obs: true
+          save_raw_obs: false
       sm_to_agent_dict:
         patch: agent_id_0
         view_finder: agent_id_0
@@ -92,6 +102,7 @@ experiment:
       lm_to_lm_vote_matrix: null
     environment:
       env_init_args:
+        lights: ${monty.class:tbp.monty.simulators.habitat.simulator.AMBIENT_LIGHTS}
         objects:
         - name: coneSolid
           position:
@@ -197,14 +208,14 @@ experiment:
       wandb_id:
         _target_: wandb.util.generate_id
       wandb_group: benchmark_experiments
-      run_name: randrot_11retexturedobj_surf_agent_nohsv
+      run_name: lbpcmp_amb_eval_11retex_ltp
     show_sensor_output: false
     max_train_steps: 1000
     max_eval_steps: 500
     max_total_steps: 6000
     n_train_epochs: 3
-    model_name_or_path: ${constants.retextured_pretrained_dir}/surf_pre_training_11retextured_obj/pretrained/
-    n_eval_epochs: 1
+    model_name_or_path: ${constants.retextured_pretrained_dir}/amb_surf_pre_training_11retextured_obj_ltp/pretrained/
+    n_eval_epochs: 20
     min_lms_match: 1
     seed: 42
     supervised_lm_ids: []

@@ -1,0 +1,45 @@
+# @package experiment.config.monty_config.sensor_modules
+
+# LBP control sensor module for the LBP-vs-LTP comparison. Identical to
+# `camera_surf_rgba_ltp` except that the texture histogram is a classic
+# rotation-invariant Local Binary Pattern (Ojala et al. 2002) rather than the
+# split Local Ternary Pattern: one binary code (`neighbor >= center`) instead of
+# a thresholded positive/negative pair, so the histogram has 36 `ror` bins rather
+# than 2 x 36. Same neighborhood (8 neighbors, radius 1), same encoding, same
+# normalization -- the ternary dead zone and the split are the only difference.
+#
+# The histogram is still reported under the feature name `ltp`, so every
+# downstream learning-module config (feature weights, tolerances, Hellinger
+# matching) applies unchanged and the arms differ only in the descriptor.
+
+sensor_module_0:
+  _target_: tbp.monty.frameworks.models.sensor_modules.CameraSM
+  is_surface_sm: true
+  sensor_module_id: patch
+  features:
+  - pose_vectors
+  - pose_fully_defined
+  - on_object
+  - object_coverage
+  - rgba
+  - hsv
+  - min_depth
+  - mean_depth
+  - principal_curvatures
+  - principal_curvatures_log
+  - gaussian_curvature
+  - mean_curvature
+  - gaussian_curvature_sc
+  - mean_curvature_sc
+  - ltp
+  ltp_config:
+    texture_extraction:
+      local_binary_pattern:
+        n_neighbors: 8
+        radius: 1.0
+        method: ror
+  save_raw_obs: false
+sensor_module_1:
+  _target_: tbp.monty.frameworks.models.sensor_modules.Probe
+  sensor_module_id: view_finder
+  save_raw_obs: false

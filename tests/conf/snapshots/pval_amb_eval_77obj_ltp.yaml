@@ -41,10 +41,12 @@ experiment:
               hsv: ${np.array:[2, 0.5, 0.5]}
               pose_vectors: ${np.ones:3}
               principal_curvatures_log: ${np.ones:2}
+              ltp: 2.0
           tolerances:
             patch:
               hsv: ${np.array:[0.1, 0.2, 0.2]}
               principal_curvatures_log: ${np.ones:2}
+              ltp: 0.5
           max_match_distance: 0.01
           x_percent_threshold: 20
           evidence_threshold_config: all
@@ -78,11 +80,19 @@ experiment:
           - mean_curvature
           - gaussian_curvature_sc
           - mean_curvature_sc
-          save_raw_obs: true
+          - ltp
+          ltp_config:
+            texture_extraction:
+              local_ternary_pattern:
+                n_neighbors: 8
+                radius: 1.0
+                threshold: 5.0
+                method: ror
+          save_raw_obs: false
         sensor_module_1:
           _target_: tbp.monty.frameworks.models.sensor_modules.Probe
           sensor_module_id: view_finder
-          save_raw_obs: true
+          save_raw_obs: false
       sm_to_agent_dict:
         patch: agent_id_0
         view_finder: agent_id_0
@@ -92,6 +102,7 @@ experiment:
       lm_to_lm_vote_matrix: null
     environment:
       env_init_args:
+        lights: ${monty.class:tbp.monty.simulators.habitat.simulator.AMBIENT_LIGHTS}
         objects:
         - name: coneSolid
           position:
@@ -100,7 +111,7 @@ experiment:
           - -0.1
         scene_id: null
         seed: 42
-        data_path: ${path.expanduser:${oc.env:MONTY_DATA}/retextured_ycb}
+        data_path: ${path.expanduser:${oc.env:MONTY_DATA}/habitat/objects/ycb}
         agents:
           agent_args:
             agent_id: agent_id_0
@@ -168,17 +179,83 @@ experiment:
     eval_env_interface_args:
       parent_to_child_mapping: null
       object_names:
-      - baseball
-      - porous_baseball
-      - matted_baseball
-      - flecked_baseball
-      - softball
-      - blotchy_softball
-      - woven_softball
-      - zigzagged_softball
       - mug
       - bowl
+      - potted_meat_can
+      - master_chef_can
+      - i_cups
+      - spoon
+      - b_cups
+      - pitcher_base
+      - knife
+      - b_marbles
+      - h_cups
+      - strawberry
+      - power_drill
+      - padlock
+      - golf_ball
+      - hammer
+      - softball
+      - orange
+      - c_lego_duplo
+      - c_toy_airplane
+      - b_lego_duplo
       - banana
+      - nine_hole_peg_test
+      - tomato_soup_can
+      - baseball
+      - g_cups
+      - gelatin_box
+      - lemon
+      - plum
+      - racquetball
+      - plate
+      - pudding_box
+      - e_cups
+      - apple
+      - j_cups
+      - foam_brick
+      - large_marker
+      - peach
+      - phillips_screwdriver
+      - a_toy_airplane
+      - e_lego_duplo
+      - sugar_box
+      - a_colored_wood_blocks
+      - c_cups
+      - pear
+      - f_cups
+      - wood_block
+      - d_lego_duplo
+      - b_toy_airplane
+      - b_colored_wood_blocks
+      - g_lego_duplo
+      - a_lego_duplo
+      - mini_soccer_ball
+      - medium_clamp
+      - a_marbles
+      - extra_large_clamp
+      - d_cups
+      - e_toy_airplane
+      - adjustable_wrench
+      - rubiks_cube
+      - f_lego_duplo
+      - a_cups
+      - skillet_lid
+      - sponge
+      - tennis_ball
+      - spatula
+      - d_toy_airplane
+      - chain
+      - scissors
+      - mustard_bottle
+      - bleach_cleanser
+      - tuna_fish_can
+      - cracker_box
+      - fork
+      - large_clamp
+      - dice
+      - flat_screwdriver
       object_init_sampler:
         _target_: tbp.monty.frameworks.environments.object_init_samplers.RandomRotation
     eval_env_interface_class: ${monty.class:tbp.monty.experiment.environment.OneObjectPerEpisodeInterface}
@@ -197,14 +274,14 @@ experiment:
       wandb_id:
         _target_: wandb.util.generate_id
       wandb_group: benchmark_experiments
-      run_name: randrot_11retexturedobj_surf_agent_nohsv
+      run_name: pval_amb_77obj_surf_agent_ltp
     show_sensor_output: false
     max_train_steps: 1000
     max_eval_steps: 500
-    max_total_steps: 6000
+    max_total_steps: 5000
     n_train_epochs: 3
-    model_name_or_path: ${constants.retextured_pretrained_dir}/surf_pre_training_11retextured_obj/pretrained/
-    n_eval_epochs: 1
+    model_name_or_path: ${constants.retextured_pretrained_dir}/amb_surf_pre_training_77obj_ltp/pretrained/
+    n_eval_epochs: ${constants.rotations_3_count}
     min_lms_match: 1
     seed: 42
     supervised_lm_ids: []

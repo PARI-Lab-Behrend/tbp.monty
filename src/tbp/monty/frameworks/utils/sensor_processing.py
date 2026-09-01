@@ -58,8 +58,10 @@ def get_ltp_texture_feature_vector(
         config: Texture-extraction config. Must contain a ``texture_extraction``
             entry keyed by either ``local_ternary_pattern`` (with
             ``n_neighbors``, ``radius``, ``threshold``, and an optional
-            ``method`` of ``"ror"`` or ``"uniform"``) or ``multi_scale`` (a list
-            of such configs whose histograms are concatenated and renormalized).
+            ``method`` of ``"ror"`` or ``"uniform"``), ``local_binary_pattern``
+            (the same minus ``threshold``; the LBP control condition), or
+            ``multi_scale`` (a list of such configs whose histograms are
+            concatenated and renormalized).
         mask: Optional boolean array, same shape as ``image_array``, selecting
             which pixels contribute to the histogram. Pixels where the mask is
             ``False`` (e.g. off-object background) are excluded.
@@ -80,6 +82,15 @@ def get_ltp_texture_feature_vector(
             n_neighbors=method_config["n_neighbors"],
             radius=method_config["radius"],
             threshold=method_config["threshold"],
+            method=method_config.get("method", "ror"),
+            mask=mask,
+        )
+
+    elif method_name == "local_binary_pattern":
+        result = local_binary_pattern_and_hist(
+            image_array,
+            n_neighbors=method_config["n_neighbors"],
+            radius=method_config["radius"],
             method=method_config.get("method", "ror"),
             mask=mask,
         )
@@ -213,6 +224,113 @@ def local_ternary_pattern_and_hist(
     histogram /= histogram.sum() + 1e-6
 
     return histogram
+
+
+def local_binary_pattern_and_hist(
+    gray_patch: np.ndarray,
+    n_neighbors: int = 8,
+    radius: float = 1.0,
+    method: LTPEncoding = "ror",
+    mask: np.ndarray | None = None,
+) -> np.ndarray:
+    """Compute Local Binary Pattern features and histogram for a grayscale patch.
+
+    This is the classic LBP of Ojala et al. (2002) and exists as the control
+    condition for the LTP experiments: a single binary code (``neighbor >=
+    center``) instead of the thresholded positive/negative pair, histogrammed with
+    the same encoding, sampling geometry and normalization as
+    :func:`local_ternary_pattern_and_hist`. The only difference is therefore the
+    ternary dead zone and the split, which is exactly what the comparison isolates.
+
+    Args:
+        gray_patch: grayscale image patch.
+        n_neighbors: Number of neighbors to consider in the circular neighborhood.
+        radius: Radius of the neighborhood in pixels.
+        method: Encoding scheme mapping raw codes to histogram bins, either
+            ``"ror"`` (rotation invariant) or ``"uniform"`` (rotation-invariant
+            uniform patterns).
+        mask: Optional boolean array, same shape as ``gray_patch``, selecting
+            which pixels contribute to the histogram, as in
+            :func:`local_ternary_pattern_and_hist`.
+
+    Returns:
+        The L1-normalized Local Binary Pattern histogram.
+
+    Raises:
+        ValueError: If ``mask`` is provided but its shape does not match
+            ``gray_patch``.
+    """
+    codes_raw = lbp_codes(gray_patch, n_neighbors=n_neighbors, radius=radius)
+    codes, n_bins = encode_ltp_codes(codes_raw, n_neighbors, method)
+
+    if mask is None:
+        values = codes.ravel()
+    else:
+        mask = np.asarray(mask, dtype=bool)
+        if mask.shape != gray_patch.shape:
+            raise ValueError(
+                "`mask` shape must match `gray_patch` shape, got "
+                f"{mask.shape} vs {gray_patch.shape}."
+            )
+        values = codes[mask]
+
+    histogram = np.bincount(values, minlength=n_bins).astype(np.float32)
+    histogram /= histogram.sum() + 1e-6
+
+    return histogram
+
+
+def lbp_codes(
+    gray_patch: np.ndarray,
+    n_neighbors: int = 8,
+    radius: float = 1.0,
+) -> np.ndarray:
+    """Compute raw Local Binary Pattern codes for a grayscale image patch.
+
+    Each neighbor on the circular neighborhood contributes one bit, set when the
+    neighbor is greater than or equal to the center pixel. Neighbors are sampled
+    with the same bilinear scheme as :func:`ltp_codes`.
+
+    Args:
+        gray_patch: grayscale image patch.
+        n_neighbors: Number of neighbors to consider in the circular neighborhood.
+        radius: Radius of the neighborhood in pixels.
+
+    Returns:
+        Raw Local Binary Pattern codes, same shape as ``gray_patch``.
+
+    Raises:
+        ValueError: If `n_neighbors` is not positive, `radius` is not positive, or
+            `gray_patch` is not 2D.
+    """
+    if n_neighbors <= 0:
+        raise ValueError(f"`n_neighbors` must be positive, got {n_neighbors}.")
+    if radius <= 0:
+        raise ValueError(f"`radius` must be positive, got {radius}.")
+    if gray_patch.ndim != 2:
+        raise ValueError(
+            "Must provide a 2D grayscale image patch, got shape", gray_patch.shape
+        )
+
+    h, w = gray_patch.shape
+    yy, xx = np.meshgrid(
+        np.arange(h, dtype=np.float32),
+        np.arange(w, dtype=np.float32),
+        indexing="ij",
+    )
+
+    codes = np.zeros((h, w), dtype=np.uint32)
+
+    # Sample the circular neighborhood, travelling clockwise (as in `ltp_codes`).
+    for i in range(n_neighbors):
+        theta = 2.0 * np.pi * i / n_neighbors
+        dy = -radius * np.sin(theta)
+        dx = radius * np.cos(theta)
+
+        neighbor = bilinear_sample(gray_patch, yy + dy, xx + dx)
+        codes |= (neighbor >= gray_patch).astype(np.uint32) << i
+
+    return codes
 
 
 def ltp_codes(

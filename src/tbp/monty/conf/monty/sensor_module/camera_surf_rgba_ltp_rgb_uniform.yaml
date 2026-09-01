@@ -1,0 +1,44 @@
+# @package experiment.config.monty_config.sensor_modules
+
+# Surface-agent variant of camera_surf_rgba_ltp_uniform that extracts the RGB LTP
+# feature (`ltp_rgb`) instead of the grayscale one (`ltp`). The R, G and B channels
+# are each histogrammed with the same LTP config and the three histograms are
+# concatenated (3 x 118 bins for uniform/n_neighbors=8).
+#
+# Feature dimension and content differ from the grayscale `ltp`, and the feature has
+# a different name, so a model pretrained with one cannot be matched against
+# observations from the other. Pair with a learning module that declares an
+# `ltp_rgb` weight/tolerance (e.g. evidence_1lm_nn5_dod0025_ltp_rgb).
+
+sensor_module_0:
+  _target_: tbp.monty.frameworks.models.sensor_modules.CameraSM
+  is_surface_sm: true
+  sensor_module_id: patch
+  features:
+  - pose_vectors
+  - pose_fully_defined
+  - on_object
+  - object_coverage
+  - rgba
+  - hsv
+  - min_depth
+  - mean_depth
+  - principal_curvatures
+  - principal_curvatures_log
+  - gaussian_curvature
+  - mean_curvature
+  - gaussian_curvature_sc
+  - mean_curvature_sc
+  - ltp_rgb
+  ltp_config:
+    texture_extraction:
+      local_ternary_pattern:
+        n_neighbors: 8
+        radius: 1.0
+        threshold: 5.0
+        method: uniform
+  save_raw_obs: false
+sensor_module_1:
+  _target_: tbp.monty.frameworks.models.sensor_modules.Probe
+  sensor_module_id: view_finder
+  save_raw_obs: false

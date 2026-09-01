@@ -1,0 +1,26 @@
+# @package _global_
+
+# Baseline arm of the ltp-tolerance sweep (t027 / t040 / t050).
+#
+# The tolerance is the slope of the evidence ramp `max(0, 1 - d/tol)` that
+# DefaultFeatureEvidenceCalculator applies to the Hellinger histogram distance, not a
+# distance threshold. Calibrating it against the evidence gap between same-object and
+# other-object nodes (`ltp_distance_analysis.best_tolerance`, run on the
+# surf_pre_training_11retextured_obj_ltp model these configs load) puts the optimum at
+# ~0.52, well above the 0.27 used here; at 0.27 roughly 23% of same-object nodes are
+# clipped to exactly zero evidence. This arm holds the current value so the higher
+# tolerances have something to beat.
+
+defaults:
+  - randrot_11retexturedobj_surf_agent_ltp
+
+experiment:
+  config:
+    monty_config:
+      learning_modules:
+        learning_module_0:
+          tolerances:
+            patch:
+              ltp: 0.27
+    logging:
+      run_name: randrot_11retexturedobj_surf_agent_ltp_t027

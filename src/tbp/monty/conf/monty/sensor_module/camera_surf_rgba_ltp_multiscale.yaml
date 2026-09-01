@@ -1,0 +1,54 @@
+# @package experiment.config.monty_config.sensor_modules
+
+# Surface-agent variant of camera_surf_rgba_ltp that builds a multi-scale LTP
+# histogram: one ROR histogram per radius, concatenated and renormalized
+# (3 scales x 72 bins = 216 bins).
+#
+# Radii are kept small (1-3 px) on purpose. The neighborhood is bilinearly sampled
+# with no border cropping, so a radius approaching the patch half-width samples
+# mostly outside the 64x64 patch. The vocus config's 5/10/20 ladder is not
+# appropriate here.
+
+sensor_module_0:
+  _target_: tbp.monty.frameworks.models.sensor_modules.CameraSM
+  is_surface_sm: true
+  sensor_module_id: patch
+  features:
+  - pose_vectors
+  - pose_fully_defined
+  - on_object
+  - object_coverage
+  - rgba
+  - hsv
+  - min_depth
+  - mean_depth
+  - principal_curvatures
+  - principal_curvatures_log
+  - gaussian_curvature
+  - mean_curvature
+  - gaussian_curvature_sc
+  - mean_curvature_sc
+  - ltp
+  ltp_config:
+    texture_extraction:
+      multi_scale:
+      - local_ternary_pattern:
+          n_neighbors: 8
+          radius: 1.0
+          threshold: 5.0
+          method: ror
+      - local_ternary_pattern:
+          n_neighbors: 8
+          radius: 2.0
+          threshold: 5.0
+          method: ror
+      - local_ternary_pattern:
+          n_neighbors: 8
+          radius: 3.0
+          threshold: 5.0
+          method: ror
+  save_raw_obs: false
+sensor_module_1:
+  _target_: tbp.monty.frameworks.models.sensor_modules.Probe
+  sensor_module_id: view_finder
+  save_raw_obs: false

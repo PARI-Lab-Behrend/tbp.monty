@@ -1,0 +1,25 @@
+# @package experiment.config
+
+# Object names follow the 3DCoMPaT++ converter naming <class>_<shape_num>_c<comp>
+# (see ~/Projects/compat3d_prep and object_names.yaml in the dataset directory):
+# two geometries (vase 29_000, jug 16_000) in four material compositions each,
+# plus three distinct shapes (planter, stool, basket).
+do_eval: true
+eval_env_interface_args:
+  parent_to_child_mapping: null
+  object_names:
+  - vase_000_c00
+  - vase_000_c01
+  - vase_000_c02
+  - vase_000_c03
+  - jug_000_c00
+  - jug_000_c01
+  - jug_000_c02
+  - jug_000_c03
+  - planter_000_c00
+  - stool_001_c00
+  - basket_001_c00
+  object_init_sampler:
+    _target_: tbp.monty.frameworks.environments.object_init_samplers.Predefined
+    rotations: ${constants.rotations_all}
+eval_env_interface_class: ${monty.class:tbp.monty.experiment.environment.OneObjectPerEpisodeInterface}

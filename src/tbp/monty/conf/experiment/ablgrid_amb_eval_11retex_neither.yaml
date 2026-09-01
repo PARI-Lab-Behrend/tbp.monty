@@ -1,0 +1,37 @@
+# @package _global_
+
+# Ablation-grid arm: neither HSV nor LTP (morphological features only). YCB-11R,
+# ambient lighting. Completes Tier 3 "ablation grid" (revisions.md): this row
+# exists for YCB (Table 3, cross/cross) but was missing for YCB-11R. Reuses the
+# LTP pretrained model (superset; both HSV and LTP are zeroed/absent at the
+# learning-module level, see evidence_1lm_nn5_dod0025_nohsv_noltp). Seed 42, same
+# RandomRotation env interface as the other YCB-11R ambient arms, so episodes
+# pair one-to-one.
+
+defaults:
+  - /monty: evidencegraph_exp1000_emin_t3_tot2500
+  - /monty/motor_system_config: surface_curvature_informed_goal1
+  - /monty/learning_module: evidence_1lm_nn5_dod0025_nohsv_noltp
+  - /monty/sensor_module: camera_surf_rgba
+  - /monty/connectivity: 1lm_1sm
+  - /environment: retextured_surf_agent_semantics0_amb
+  - /env_interface: eval_retexturedobj_random
+  - /env_interface/transform: missing_depthto3d_sensor2_semantic0_clip
+  - /logging: basic_warning_wandb_monty_runs
+
+experiment:
+  _target_: tbp.monty.frameworks.experiments.object_recognition_experiments.MontyObjectRecognitionExperiment
+  config:
+    show_sensor_output: false
+    max_train_steps: 1000
+    max_eval_steps: 500
+    max_total_steps: 6000
+    n_train_epochs: 3
+    model_name_or_path: ${constants.retextured_pretrained_dir}/amb_surf_pre_training_11retextured_obj_ltp/pretrained/
+    n_eval_epochs: 20
+    min_lms_match: 1
+    seed: 42
+    supervised_lm_ids: []
+    python_log_level: DEBUG
+    logging:
+      run_name: ablgrid_amb_eval_11retex_neither

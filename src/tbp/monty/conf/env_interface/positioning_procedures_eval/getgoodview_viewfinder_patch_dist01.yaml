@@ -1,0 +1,17 @@
+# @package experiment.config.eval_env_interface_args
+
+# Same as getgoodview_viewfinder_patch but stops the approach 0.1 m from the
+# object instead of the 0.03 m default. Needed for objects with thin geometry
+# (e.g. 3DCoMPaT++ furniture rescaled to ~0.12 m): with the default distance
+# the camera can step through gaps in the object mid-approach, ending up
+# inside it with no visible target.
+positioning_procedures:
+- _target_: tbp.monty.frameworks.environments.positioning_procedures.GetGoodViewFactory
+  agent_id: agent_id_0
+  sensor_id: view_finder
+  good_view_distance: 0.1
+- _target_: tbp.monty.frameworks.environments.positioning_procedures.GetGoodViewFactory
+  agent_id: agent_id_0
+  sensor_id: patch
+  allow_translation: false
+  max_orientation_attempts: 3

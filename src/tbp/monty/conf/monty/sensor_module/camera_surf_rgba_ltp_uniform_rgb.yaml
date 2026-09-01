@@ -1,0 +1,46 @@
+# @package experiment.config.monty_config.sensor_modules
+
+# Combined training sensor module that extracts BOTH the grayscale LTP feature
+# (`ltp`) and the RGB LTP feature (`ltp_rgb`), each with the rotation-variant
+# "uniform" encoding. A single model pretrained with this SM therefore stores both
+# histograms, so it can be evaluated as either the grayscale-uniform variant (weight
+# `ltp`) or the RGB variant (weight `ltp_rgb`) without a second training run. The two
+# features are independent (see sensor_modules.py: separate `if "ltp"` / `if
+# "ltp_rgb"` blocks) and share this single ltp_config.
+#
+# Eval side: pair with camera_surf_rgba_ltp_uniform (weights `ltp`) or
+# camera_surf_rgba_ltp_rgb_uniform (weights `ltp_rgb`).
+
+sensor_module_0:
+  _target_: tbp.monty.frameworks.models.sensor_modules.CameraSM
+  is_surface_sm: true
+  sensor_module_id: patch
+  features:
+  - pose_vectors
+  - pose_fully_defined
+  - on_object
+  - object_coverage
+  - rgba
+  - hsv
+  - min_depth
+  - mean_depth
+  - principal_curvatures
+  - principal_curvatures_log
+  - gaussian_curvature
+  - mean_curvature
+  - gaussian_curvature_sc
+  - mean_curvature_sc
+  - ltp
+  - ltp_rgb
+  ltp_config:
+    texture_extraction:
+      local_ternary_pattern:
+        n_neighbors: 8
+        radius: 1.0
+        threshold: 5.0
+        method: uniform
+  save_raw_obs: false
+sensor_module_1:
+  _target_: tbp.monty.frameworks.models.sensor_modules.Probe
+  sensor_module_id: view_finder
+  save_raw_obs: false

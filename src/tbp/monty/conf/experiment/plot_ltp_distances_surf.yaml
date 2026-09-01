@@ -1,0 +1,53 @@
+# @package _global_
+
+# Analysis-only counterpart of randrot_11retexturedobj_surf_agent_ltp.yaml.
+# Loads the *surf-agent* pretrained 11-retextured-object LTP model and plots the
+# within-object vs across-object LTP texture-histogram distance distributions
+# using Monty's actual matching distance functions. No environment is created and
+# the sensorimotor loop is never run -- it just reads the stored graphs and writes
+# a plot + per-metric stats (including the best discriminating threshold).
+#
+# Run:
+#   python run.py experiment=plot_ltp_distances_surf
+
+defaults:
+  - /monty: evidencegraph_exp1000_emin_t3_tot2500
+  - /monty/motor_system_config: surface_curvature_informed_goal1
+  - /monty/learning_module: evidence_1lm_nn5_dod0025_ltp
+  - /monty/sensor_module: camera_surf_rgba_ltp_uniform
+  - /monty/connectivity: 1lm_1sm
+  - /logging: basic_warning_wandb_monty_runs
+
+experiment:
+  _target_: tbp.monty.frameworks.experiments.analysis_experiments.MontyLTPDistanceExperiment
+  config:
+    do_train: false
+    do_eval: false
+    show_sensor_output: false
+    max_train_steps: 1000
+    max_eval_steps: 500
+    max_total_steps: 6000
+    n_train_epochs: 1
+    n_eval_epochs: 1
+    model_name_or_path: ${constants.retextured_pretrained_dir}/surf_pre_training_11retextured_obj_ltp_multiscale/pretrained/
+    min_lms_match: 1
+    seed: 42
+    supervised_lm_ids: []
+    python_log_level: INFO
+    # Parameters for the LTP distance analysis (all optional; defaults shown).
+    ltp_distance:
+      metrics: [chisq, hellinger, kldiv, jensen_shannon]  # or "all"; any names from METRICS
+      feature: ltp
+      lm_id: 0
+      max_nodes_per_object: 300
+      n_queries: 400
+      # Cap the plot x-axis (applied to every metric). Comment out / set to null
+      # to auto-scale each subplot to its 99.5th percentile instead.
+      xmax: 1
+      # Split same-shape reskin families into shape groups (adds within/across-group
+      # regimes). Comment out to only compare within-object vs across-object.
+      group_regex: '(baseball|softball)$'
+      bins: 60
+      seed: 42
+    logging:
+      run_name: plot_ltp_distances_surf_multiscale
