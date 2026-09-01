@@ -155,14 +155,6 @@ Miniconda3-*.sh
 # Regenerable visualization output (see scripts/visualize_*.py, scripts/plot_ltp_distances.py)
 lighting_snapshots/
 
-# LaTeX build artifacts for the BICA paper (source is committed; PDFs are not)
-Monty_LTP_BICA/main.pdf
-Monty_LTP_BICA/main.aux
-Monty_LTP_BICA/main.log
-Monty_LTP_BICA/main.blg
-Monty_LTP_BICA/main.bbl
-Monty_LTP_BICA/main.fls
-Monty_LTP_BICA/main.fdb_latexmk
-Monty_LTP_BICA/main.synctex.gz
-Monty_LTP_BICA/mypaper.zip
-Monty_LTP_BICA/Springer_ProceedingsPaper_LTP_ST_SN_Switzerland.pdf
+
+# BICA paper lives on bica-exp; keep its local leftovers out of this branch
+Monty_LTP_BICA/
