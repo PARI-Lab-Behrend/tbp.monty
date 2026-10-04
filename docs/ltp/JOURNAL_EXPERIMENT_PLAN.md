@@ -145,9 +145,9 @@ Optional third set if time remains: 3DC-Texture-L, 20 shapes x 8 materials =
 3. Build with `python compat3d_helper.py --zip ... --recipe <r>.yaml --build`.
    Building is cheap (~3.5 min per 50 objects), so build **both full sets at
    all three Phase 2 sizes (0.12, 0.25, 0.5 m) on day 1** instead of waiting
-   for the Phase 2 decision; the chosen size is then already on disk, and the
-   other two are exactly the 0.5x / 2x sets Phase 7's footprint-mismatch test
-   needs if 0.25 wins. Commit the recipes and `material_stats.csv` -- the
+   for the Phase 2 decision; the chosen size is then already on disk.
+   (Outcome: 0.12 m kept, so Phase 7's mismatch sets are 0.06 m -- to build --
+   and 0.25 m.) Commit the recipes and `material_stats.csv` -- the
    recipe *is* the dataset definition.
 4. Add env / train / eval configs in tbp.monty pointing at
    `$MONTY_DATA/compat3d_texture` and `$MONTY_DATA/compat3d_mixed`, one
@@ -277,7 +277,11 @@ pairs < 1 cm or > 5 cm apart), add rotations rather than objects.
    `ltp_distance_analysis.py`.
 
 **Decision:** pick the footprint that maximizes separability subject to
-location-specificity AUC > 0.6; fix it for all main experiments. Report the
+location-specificity AUC > 0.6; fix it for all main experiments.
+**Outcome (2026-10-04):** the rule favored 0.25 m by a small margin (evidence
+gap 0.353 vs 0.312 at 0.12 m; one training per size); the margin was judged
+not significant and the default **0.12 m** was kept. Results in
+JOURNAL_PROGRESS.md. Report the
 sweep as a figure -- it is a contribution in itself (the dataset property that
 YCB does not stress). Phase 7 then tests train/test footprint mismatch.
 
@@ -395,8 +399,9 @@ run on a low-power CPU (e.g. a Raspberry Pi / Jetson-class board) if available.
 ## Phase 7 -- Robustness (1.5 days compute, ambient; proposed vs baseline vs Gabor matched)
 
 Lighting is not an ablation; it is a scenario of the main comparison (Phase 5).
-Noise and footprint mismatch are eval-only (the mismatch test sets are the
-day-1 builds at the other two sizes); only the LTP threshold levels need
+Noise and footprint mismatch are eval-only (with `target_size` 0.12 m, the
+mismatch test sets are 0.06 m -- a few minutes to build -- and the day-1 0.25 m
+build); only the LTP threshold levels need
 retraining, on 3DC-Texture only.
 
 | Ablation | Levels | Why |

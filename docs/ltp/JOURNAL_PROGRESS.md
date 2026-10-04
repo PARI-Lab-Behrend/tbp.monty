@@ -13,8 +13,8 @@ Last updated: 2026-10-04
 
 | Phase | Status | Gate / output | Note |
 |---|---|---|---|
-| Build tooling (`material_stats.py`, `make_recipes.py`) | done (uncommitted) | `material_stats.csv`, recipe YAMLs | 3DC-Texture design approved by user 2026-10-04 |
-| Phase 2 -- scale / footprint sweep (ambient) | todo (next) | `target_size` decision | Subset recipes ready: jug, ottoman, table x 5 variants at 0.12 / 0.25 / 0.5 m; 2 rotations per object (90 episodes) |
+| Build tooling (`material_stats.py`, `make_recipes.py`) | done | `material_stats.csv`, recipe YAMLs | 3DC-Texture design approved by user 2026-10-04 |
+| Phase 2 -- scale / footprint sweep (ambient) | done | `target_size` decision | **0.12 m kept** (user decision); rule would pick 0.25 m by a small margin. Results below |
 | Datasets 3DC-Texture (50) + 3DC-Mixed (60) | todo | `$MONTY_DATA/compat3d_texture`, `compat3d_mixed` | Build at all 3 sizes on day 1 (no longer waits for Phase 2) |
 | Phase 1 Prelim A -- asset sanity | todo | 100% pass on 5 checks + contact sheet | |
 | Phase 1 Prelim B -- headroom | todo | `hsv` baseline in 30-80% on 3DC-Texture | |
@@ -33,14 +33,14 @@ Last updated: 2026-10-04
 |---|---|---|
 | Feature keys `ltp`, `ltp_rgb`, `ltp_hsv` | present | `frameworks/utils/sensor_processing.py`, `frameworks/models/sensor_modules.py` |
 | Offline distance analysis (`tolerance_sweep`, `best_tolerance`, Hellinger + 6 others) | present | `frameworks/utils/ltp_distance_analysis.py` |
-| Location-specificity AUC function (Phase 2 measure 2) | **missing** | to add in `ltp_distance_analysis.py` |
+| Location-specificity AUC function (Phase 2 measure 2) | present, uncommitted (+ unit tests) | `ltp_distance_analysis.location_specificity_auc`; analysis script `scripts/phase2_footprint_analysis.py` |
 | `compat3d_helper.py --recipe ... --build` | present | `~/3dcompat-habitat-prep/` |
 | Source zip `3DCoMPaT_ZIP.zip` | present | `~/3dcompat-habitat-prep/3DCoMPaT_3D/` |
 | Old 11-object sets `compat3d_ltp`, `compat3d_habitat_test` | present | `~/tbp/data/` (= `$MONTY_DATA`, exported in `~/.bashrc`) |
 | Env / train / eval configs for `compat3d_ltp` | present, uncommitted | `conf/env_interface/*3dcompat*`, `conf/environment/habitat_3dcompat_*` |
 | Sensor-patch renderer (distant agent at 0.3 m -- *not* the surface-agent experiments' view) | present | `scripts/compat3d_test/render_sensor_snapshots.py` |
-| Trusted sensor-view capture (`show_sensor_output` frames, headless) | present, uncommitted | `scripts/compat3d_test/capture_sensor_output.py` |
-| Material stats + recipe generator | present, uncommitted | `~/3dcompat-habitat-prep/{material_stats.py,make_recipes.py,material_stats.csv,recipes/}` |
+| Trusted sensor-view capture (`show_sensor_output` frames, headless) | present | `scripts/compat3d_test/capture_sensor_output.py` |
+| Material stats + recipe generator | present (committed on branch `journal-datasets`) | `~/3dcompat-habitat-prep/{material_stats.py,make_recipes.py,material_stats.csv,recipes/}` |
 | Configs for 3DC-Texture / 3DC-Mixed | **missing** | |
 | Ambient light setup `AMBIENT_LIGHTS`; directional = Habitat default (`lights: None`) | present | `simulators/habitat/simulator.py` |
 | Ambient and directional 3DCoMPaT environment / experiment configs for the new sets (explicit `lights` in both) | **missing** | template: `conf/environment/retextured_surf_agent_semantics0_amb.yaml`. All current 3DCoMPaT configs set no `lights` key, so they run directional |
@@ -72,7 +72,7 @@ Record each with date, the evidence, and the rule applied.
 
 | Decision | Value | Date | Evidence |
 |---|---|---|---|
-| `target_size` (patch footprint) | -- | | Phase 2 |
+| `target_size` (patch footprint) | **0.12 m** (the existing default) | 2026-10-04 | User decision, overriding the Phase 2 rule (which picks 0.25 m: evidence gap 0.353 vs 0.312, d' 1.31 vs 1.15). The margin is consistent over sampling seeds but untested over retraining (1 training per size), and 0.12 passes the location floor (AUC 0.71). Revisit if texture separation causes problems. Phase 7 mismatch sets: 0.06 m (0.5x, to build) and 0.25 m (2x, built) |
 | 3DC-Texture design | dataset composition + 4 same-family swaps of the most visible slot (>= 40% of visible surface), closest in mean color, texture energy >= 5 | 2026-10-04 | User rejected one-material-per-object (unrealistic); approved this after Habitat previews and `show_sensor_output` frames |
 | Patch footprint at `target_size` 0.12 | 3.9 mm of surface (~3% of object) | 2026-10-04 | Raw sensor arrays from a real ottoman episode; judged usable by user. Phase 2 still decides `target_size` |
 | Color LTP winner (`ltp_rgb` or `ltp_hsv`) | -- | | Phase 3 rule: `ltp_hsv` only if ≥ 3 points better on both sets |
@@ -83,6 +83,33 @@ Record each with date, the evidence, and the rule applied.
 | Trainings | 1 combined-feature run per dataset x lighting (4 total) | 2026-10-04 | Texture features don't enter `graph_delta_thresholds`; gate: Prelim C equivalence check |
 | Rotations x seeds for Phase 5 | 5 x 2 (provisional) | | Prelim C budget |
 
+## Phase 2 results (2026-10-04, ambient, `ltp_rgb`)
+
+15 objects (jug / metal, ottoman / leather, table / wood x 5 variants), 2
+rotations each, one pretraining per size. Separability = Monty's Hellinger
+distance between nodes of the same object vs nodes of another variant of the
+*same shape*, scored by the evidence gap at the gap-optimal tolerance.
+Location AUC = probability that node pairs > 5 cm apart differ more in
+`ltp_rgb` than pairs < 1 cm apart (0.5 = no location information). Values are
+sampling seed 0; evidence gap for seeds 1 and 2 in parentheses. CSVs:
+`docs/ltp/results/phase2/`.
+
+| `target_size` | Patch vs object | Evidence gap | d' | Best tolerance | Location AUC, median (min) | Location AUC: jug / ottoman / table |
+|---|---|---|---|---|---|---|
+| 0.12 m | 3.9 mm patch (measured), ~3% of object | 0.312 (0.315, 0.306) | 1.15 | 0.26 | 0.71 (0.59) | 0.74 / 0.73 / 0.61 |
+| **0.25 m** | same patch, ~1.6% of object | **0.353** (0.367, 0.354) | **1.31** | 0.30 | 0.73 (0.59) | 0.77 / 0.74 / 0.62 |
+| 0.5 m | same patch, ~0.8% of object | 0.327 (0.331, 0.323) | 1.13 | 0.28 | 0.77 (0.56) | 0.82 / 0.81 / 0.71 |
+
+- All three sizes pass the location-specificity floor (median AUC > 0.6), so
+  the rule reduces to the largest separability: 0.25 m. **Not adopted**: the
+  user judged the margin not significant and kept 0.12 m (see Decisions).
+- Location specificity rises with size (more distinct surface per absolute
+  cm); separability peaks in the middle.
+- Caveats: one training per size (training-to-training variance unmeasured);
+  3 shapes; the table is the weakest object for location AUC at every size.
+- Compute: `run_parallel.py` (one process per object) took ~11 min per size,
+  all three concurrently; the sequential `run.py` pace was ~40 min per size.
+
 ## Compute budget (fill from Prelim C)
 
 - s / training episode (50-obj, 60-obj): --
@@ -92,6 +119,18 @@ Record each with date, the evidence, and the rule applied.
 ## Log
 
 Newest first. One or two lines each: what ran, result, where the output is.
+
+- **2026-10-04** -- `target_size` stays **0.12 m**: user judged the Phase 2
+  margin for 0.25 m not significant; recorded, revisit if needed. Phase 7's
+  0.5x set (0.06 m) needs building.
+- **2026-10-04** -- Phase 2 ran. Built `compat3d_texture_p2_{012,025,050}`;
+  pretrained `journal/phase2_pre_training_texture_p2_{012,025,050}_amb`
+  (ambient, 2 rotations, `run_parallel.py`, ~11 min each). Analysis
+  (`scripts/phase2_footprint_analysis.py`, new `location_specificity_auc`)
+  selects **0.25 m** by the pre-registered rule; table above. New configs:
+  `environment/habitat_3dcompat_journal_surf_agent_{amb,dir}.yaml` (explicit
+  `lights`), `env_interface/train_3dcompat_texture_p2_2rot.yaml`; snapshots
+  added; conf tests 118 pass. Phase 2 code not yet committed.
 
 - **2026-10-04** -- Phase 2 cut from 14 to 2 rotations per object
   (`[0,0,0]`, `[90,0,0]`): its two measures are offline statistics on stored

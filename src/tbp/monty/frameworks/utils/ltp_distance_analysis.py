@@ -453,6 +453,106 @@ def best_tolerance(
     }
 
 
+# --------------------------------------------------------------------------- #
+# Location specificity: does the feature say *where* on the object a node is?
+# --------------------------------------------------------------------------- #
+def extract_positions(models: dict[str, dict[str, object]]) -> dict[str, np.ndarray]:
+    """Per-object node locations, row-aligned with :func:`extract_histograms`.
+
+    Args:
+        models: Same structure as for :func:`extract_histograms`.
+
+    Returns:
+        ``{object_id: array(n_nodes, 3)}`` in meters.
+    """
+    try:
+        import torch
+    except ImportError:  # torch is always present in practice; guard for typing.
+        torch = None  # type: ignore[assignment]
+
+    positions: dict[str, np.ndarray] = {}
+    for object_id, channels in models.items():
+        per_channel = []
+        for model in channels.values():
+            pos = model.pos
+            if torch is not None and isinstance(pos, torch.Tensor):
+                pos = pos.detach().cpu().numpy()
+            per_channel.append(np.asarray(pos, dtype=np.float64))
+        if per_channel:
+            positions[object_id] = np.vstack(per_channel)
+    return positions
+
+
+def _mann_whitney_auc(low: np.ndarray, high: np.ndarray) -> float:
+    """P(a random ``high`` value > a random ``low`` value), ties counted as 1/2."""
+    pooled = np.concatenate([low, high])
+    order = pooled.argsort(kind="mergesort")
+    ranks = np.empty(pooled.size)
+    sorted_vals = pooled[order]
+    # Average ranks over ties.
+    _, first, counts = np.unique(sorted_vals, return_index=True, return_counts=True)
+    avg_rank = first + (counts + 1) / 2.0
+    ranks[order] = np.repeat(avg_rank, counts)
+    rank_sum_high = ranks[low.size :].sum()
+    u = rank_sum_high - high.size * (high.size + 1) / 2.0
+    return float(u / (low.size * high.size))
+
+
+def location_specificity_auc(
+    positions: np.ndarray,
+    hists: np.ndarray,
+    metric,
+    rng: np.random.Generator,
+    near: float = 0.01,
+    far: float = 0.05,
+    n_queries: int = 300,
+) -> dict[str, float]:
+    """AUC of feature distance for spatially far vs near node pairs on one object.
+
+    For ``n_queries`` random query nodes, the feature distance to every other node
+    is split by spatial distance into *near* (``< near`` m) and *far*
+    (``> far`` m) pairs. The AUC is the probability that a random far pair is more
+    different in feature space than a random near pair. 0.5 means the feature
+    carries no information about location on the object (every patch looks
+    alike); 1.0 means nearby patches always look more alike than distant ones.
+
+    Args:
+        positions: Node locations of one object, ``(n_nodes, 3)``.
+        hists: Its histograms, row-aligned with ``positions``.
+        metric: Distance function from :data:`METRICS`.
+        rng: Random generator for the query sample.
+        near: Upper spatial distance (m) of a near pair.
+        far: Lower spatial distance (m) of a far pair.
+        n_queries: Number of query nodes.
+
+    Returns:
+        ``{"auc", "n_near", "n_far", "median_near", "median_far"}``; ``auc`` is NaN
+        when either group is empty.
+    """
+    n = positions.shape[0]
+    query_idx = rng.choice(n, size=min(n_queries, n), replace=False)
+    near_d, far_d = [], []
+    for qi in query_idx:
+        spatial = np.linalg.norm(positions - positions[qi], axis=1)
+        spatial[qi] = np.nan  # exclude self
+        feat = metric(hists, hists[qi])
+        near_d.append(feat[spatial < near])
+        far_d.append(feat[spatial > far])
+    near_d = np.concatenate(near_d) if near_d else np.array([])
+    far_d = np.concatenate(far_d) if far_d else np.array([])
+    if near_d.size == 0 or far_d.size == 0:
+        auc = float("nan")
+    else:
+        auc = _mann_whitney_auc(near_d, far_d)
+    return {
+        "auc": auc,
+        "n_near": int(near_d.size),
+        "n_far": int(far_d.size),
+        "median_near": float(np.median(near_d)) if near_d.size else float("nan"),
+        "median_far": float(np.median(far_d)) if far_d.size else float("nan"),
+    }
+
+
 def _print_tolerance_sweep(name: str, within: np.ndarray, across: np.ndarray) -> float:
     """Print the evidence-vs-tolerance table; return the gap-optimal tolerance."""
     best = best_tolerance(within, across)

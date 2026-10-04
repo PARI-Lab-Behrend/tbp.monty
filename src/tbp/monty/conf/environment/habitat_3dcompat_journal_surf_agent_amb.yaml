@@ -1,0 +1,60 @@
+# @package experiment.config.environment
+
+# Surface-agent environment for the journal 3DCoMPaT++ sets, AMBIENT lighting
+# (the primary scenario, JOURNAL_EXPERIMENT_PLAN.md "Lighting scenarios"):
+# AMBIENT_LIGHTS = six equal directional lights along +-x, +-y, +-z. Agent and
+# sensors match habitat_3dcompat_ltp_surf_agent_semantics0. `data_path` defaults
+# to 3DC-Texture; experiments override it per dataset / target_size.
+
+env_init_args:
+  lights: ${monty.class:tbp.monty.simulators.habitat.simulator.AMBIENT_LIGHTS}
+  objects:
+  - name: coneSolid
+    position:
+    - 0.0
+    - 1.5
+    - -0.1
+  scene_id: null
+  seed: 42
+  data_path: ${path.expanduser:${oc.env:MONTY_DATA}/compat3d_texture}
+  agents:
+    agent_args:
+      agent_id: agent_id_0
+      sensor_ids:
+      - patch
+      - view_finder
+      height: 0.0
+      position:
+      - 0.0
+      - 1.5
+      - 0.1
+      resolutions:
+      - - 64
+        - 64
+      - - 64
+        - 64
+      positions:
+      - - 0.0
+        - 0.0
+        - 0.0
+      - - 0.0
+        - 0.0
+        - 0.03
+      rotations:
+      - - 1.0
+        - 0.0
+        - 0.0
+        - 0.0
+      - - 1.0
+        - 0.0
+        - 0.0
+        - 0.0
+      semantics:
+      - false
+      - false
+      zooms:
+      - 10.0
+      - 1.0
+      action_space_type: surface_agent
+    agent_type: ${monty.class:tbp.monty.simulators.habitat.MultiSensorAgent}
+env_init_func: ${monty.class:tbp.monty.simulators.habitat.environment.HabitatEnvironment}

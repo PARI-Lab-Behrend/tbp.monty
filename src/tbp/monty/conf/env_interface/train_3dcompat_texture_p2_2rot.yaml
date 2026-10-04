@@ -1,0 +1,34 @@
+# @package experiment.config
+
+# Phase 2 (scale / footprint sweep) training objects: the 15-object 3DC-Texture
+# subset (jug / metal, ottoman / leather, table / wood x 5 variants), identical
+# names at every target_size. Only 2 rotations per object: Phase 2's measures
+# are offline statistics on the stored features, not a full model
+# (JOURNAL_EXPERIMENT_PLAN.md, Phase 2). [0,0,0] is a side view; [90,0,0]
+# pitches the object to bring its top or bottom into view.
+
+do_train: true
+train_env_interface_class: ${monty.class:tbp.monty.experiment.environment.OneObjectPerEpisodeInterface}
+train_env_interface_args:
+  parent_to_child_mapping: null
+  object_names:
+  - table_46b_c0_wood_13
+  - table_46b_c0_wood_08
+  - table_46b_c0_wood_12
+  - table_46b_c0_wood_16
+  - table_46b_c0_wood_40
+  - ottoman_0ef_c3_leather_04
+  - ottoman_0ef_c3_leather_27
+  - ottoman_0ef_c3_leather_14
+  - ottoman_0ef_c3_leather_15
+  - ottoman_0ef_c3_leather_02
+  - jug_05a_c1_metal_33
+  - jug_05a_c1_metal_46
+  - jug_05a_c1_metal_49
+  - jug_05a_c1_metal_04
+  - jug_05a_c1_metal_39
+  object_init_sampler:
+    _target_: tbp.monty.frameworks.environments.object_init_samplers.Predefined
+    rotations:
+    - [0, 0, 0]
+    - [90, 0, 0]
