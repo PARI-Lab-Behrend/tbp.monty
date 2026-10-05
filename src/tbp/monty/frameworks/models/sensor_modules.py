@@ -30,6 +30,9 @@ from tbp.monty.frameworks.models.motor_system_state import (
 from tbp.monty.frameworks.sensors import SensorID
 from tbp.monty.frameworks.utils.sensor_processing import (
     LTP_PIXEL_STATS_KEY,
+    get_gabor_hsv_texture_feature_vector,
+    get_gabor_rgb_texture_feature_vector,
+    get_gabor_texture_feature_vector,
     get_ltp_hsv_texture_feature_vector,
     get_ltp_rgb_texture_feature_vector,
     get_ltp_texture_feature_vector,
@@ -139,6 +142,9 @@ class ObservationProcessor:
         "ltp",
         "ltp_rgb",
         "ltp_hsv",
+        "gabor",
+        "gabor_rgb",
+        "gabor_hsv",
         "pose_vectors",
         "principal_curvatures",
         "principal_curvatures_log",
@@ -162,6 +168,7 @@ class ObservationProcessor:
         weight_curvature=True,
         is_surface_sm=False,
         ltp_config=None,
+        gabor_config=None,
     ) -> None:
         """Initializes the ObservationProcessor.
 
@@ -182,6 +189,9 @@ class ObservationProcessor:
                 feature extraction. Required when "ltp", "ltp_rgb" or "ltp_hsv" is
                 in `features`; the same config is used for all of them. Defaults to
                 None.
+            gabor_config: Optional configuration for the Gabor texture features
+                ("gabor", "gabor_rgb", "gabor_hsv"); see
+                :func:`get_gabor_texture_feature_vector`. None uses its defaults.
 
         Raises:
             ValueError: If "ltp", "ltp_rgb" or "ltp_hsv" is in `features` but no
@@ -206,6 +216,7 @@ class ObservationProcessor:
         self._surface_normal_method = surface_normal_method
         self._weight_curvature = weight_curvature
         self._ltp_config = ltp_config
+        self._gabor_config = gabor_config
 
     def process(self, observation: SensorObservation) -> Message:
         """Processes observation.
@@ -385,6 +396,23 @@ class ObservationProcessor:
             features["ltp_hsv"] = get_ltp_hsv_texture_feature_vector(
                 rgb_patch, self._ltp_config, mask=on_object_mask
             )
+        # Gabor texture descriptors over the same on-object pixels as LTP.
+        gabor_extractors = {
+            "gabor": lambda rgb, mask: get_gabor_texture_feature_vector(
+                (rgb2gray(rgb) * 255.0).astype(np.uint8), self._gabor_config, mask=mask
+            ),
+            "gabor_rgb": lambda rgb, mask: get_gabor_rgb_texture_feature_vector(
+                rgb, self._gabor_config, mask=mask
+            ),
+            "gabor_hsv": lambda rgb, mask: get_gabor_hsv_texture_feature_vector(
+                rgb, self._gabor_config, mask=mask
+            ),
+        }
+        for key, extract in gabor_extractors.items():
+            if key in self._features:
+                rgb_patch = rgba_feat[:, :, :3]
+                on_object_mask = (obs_3d[:, 3] > 0).reshape(rgb_patch.shape[:2])
+                features[key] = extract(rgb_patch, on_object_mask)
 
         # Note we only determine curvature if we could determine a valid surface normal
         if any(feat in self.CURVATURE_FEATURES for feat in self._features) and valid_sn:
@@ -622,6 +650,7 @@ class CameraSM(SensorModule):
         is_surface_sm: bool = False,
         delta_thresholds: dict[str, Any] | None = None,
         ltp_config: dict[str, Any] | None = None,
+        gabor_config: dict[str, Any] | None = None,
     ) -> None:
         """Initialize Sensor Module.
 
@@ -647,6 +676,10 @@ class CameraSM(SensorModule):
                 in `features`. See
                 :func:`tbp.monty.frameworks.utils.sensor_processing.get_ltp_texture_feature_vector`
                 for the expected structure. Defaults to None.
+            gabor_config: Optional configuration for the Gabor texture features
+                ("gabor", "gabor_rgb", "gabor_hsv"). See
+                :func:`tbp.monty.frameworks.utils.sensor_processing.get_gabor_texture_feature_vector`.
+                None uses its defaults.
 
         Note:
             When using feature-at-location matching with graphs, surface_normal and
@@ -662,6 +695,7 @@ class CameraSM(SensorModule):
             pc1_is_pc2_threshold=pc1_is_pc2_threshold,
             is_surface_sm=is_surface_sm,
             ltp_config=ltp_config,
+            gabor_config=gabor_config,
         )
         # TODO: With DefaultMessageNoise not getting RNG on init anymore,
         #       then we can initialize CameraSM with MessageNoise, instead
@@ -830,9 +864,9 @@ class FeatureChangeFilter(PerceptFilter):
                     )
                     return True
 
-            elif feature in ("ltp", "ltp_rgb", "ltp_hsv"):
+            elif feature in ("ltp", "ltp_rgb", "ltp_hsv", "gabor", "gabor_rgb", "gabor_hsv"):
                 pass
-                # Never use LTP for FeatureChange SM, so as to ensure that its
+                # Never use LTP (or Gabor) for FeatureChange SM, so as to ensure that its
                 # inclusion (or absense) does not modify the number of points
                 # observed. Can consider relaxing this, although unlikely to make
                 # a large difference, as base distance threshold results in many

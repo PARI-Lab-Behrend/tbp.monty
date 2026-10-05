@@ -92,6 +92,12 @@ class DefaultFeatureEvidenceCalculator:
     # per-channel Hellinger distances, so the channels are already compared
     # independently and then pooled.
     HISTOGRAM_FEATURES = frozenset({"ltp", "ltp_rgb", "ltp_hsv"})
+    # Gabor descriptors store one L2-normalized vector per channel back to back
+    # (gray; R/G/B; S*cos H, S*sin H, S, V). Each is scored as a single column: the
+    # Euclidean distance over the concatenation divided by sqrt(n_channels), i.e.
+    # the root-mean-square of the per-channel distances (in [0, 2]) -- the same
+    # pooling the Hellinger distance gives the per-channel LTP histograms.
+    VECTOR_FEATURE_CHANNELS = {"gabor": 1, "gabor_rgb": 3, "gabor_hsv": 4}
     # Histogram features subject to the patch-intensity reliability gate below. Only
     # the grayscale `ltp` qualifies: the gate is defined in terms of the grayscale
     # patch statistics, which `ltp_rgb` and `ltp_hsv` do not report.
@@ -210,6 +216,13 @@ class DefaultFeatureEvidenceCalculator:
                 feature_differences[:, scored_start] = cls._hellinger_distances(
                     channel_feature_array, stored_start, stored_end, query_feature
                 )
+            elif feature in cls.VECTOR_FEATURE_CHANNELS:
+                feature_weight_list[scored_start:scored_end] = channel_feature_weights[
+                    feature
+                ]
+                feature_differences[:, scored_start] = np.linalg.norm(
+                    stored - query_feature, axis=1
+                ) / np.sqrt(cls.VECTOR_FEATURE_CHANNELS[feature])
             else:
                 feature_weight_list[scored_start:scored_end] = channel_feature_weights[
                     feature
@@ -243,8 +256,9 @@ class DefaultFeatureEvidenceCalculator:
 
         Returns:
             One `(feature, stored_start, stored_end, scored_width)` entry per matched
-            feature. `scored_width` is 1 for histogram features (which collapse to a
-            single distance column) and equal to the feature's length otherwise.
+            feature. `scored_width` is 1 for histogram and Gabor vector features
+            (which collapse to a single distance column) and equal to the feature's
+            length otherwise.
         """
         layout = []
         stored_start = 0
@@ -256,7 +270,12 @@ class DefaultFeatureEvidenceCalculator:
                 len(query_feature) if hasattr(query_feature, "__len__") else 1
             )
             stored_end = stored_start + feature_length
-            scored_width = 1 if feature in cls.HISTOGRAM_FEATURES else feature_length
+            scored_width = (
+                1
+                if feature in cls.HISTOGRAM_FEATURES
+                or feature in cls.VECTOR_FEATURE_CHANNELS
+                else feature_length
+            )
             layout.append((feature, stored_start, stored_end, scored_width))
             stored_start = stored_end
         return layout

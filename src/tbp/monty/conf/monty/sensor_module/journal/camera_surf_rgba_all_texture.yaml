@@ -1,0 +1,53 @@
+# @package experiment.config.monty_config.sensor_modules
+
+# Journal combined-feature sensor module for PRETRAINING: emits every texture
+# feature the journal compares -- center-pixel `hsv`, `ltp` / `ltp_rgb` /
+# `ltp_hsv` (uniform encoding, n_neighbors 8, radius 1, threshold 5) and
+# `gabor` / `gabor_rgb` / `gabor_hsv` (default bank: 4 orientations x
+# wavelengths 4, 8, 16 px, FFT path) -- so one pretraining per dataset x
+# lighting serves every condition (JOURNAL_EXPERIMENT_PLAN.md, "Train once per
+# dataset x lighting"). Texture features never decide which graph nodes are
+# kept, so the stored graphs equal those of a single-feature run. Evals use a
+# sensor module that emits only their condition's features.
+
+sensor_module_0:
+  _target_: tbp.monty.frameworks.models.sensor_modules.CameraSM
+  is_surface_sm: true
+  sensor_module_id: patch
+  features:
+  - pose_vectors
+  - pose_fully_defined
+  - on_object
+  - object_coverage
+  - rgba
+  - hsv
+  - min_depth
+  - mean_depth
+  - principal_curvatures
+  - principal_curvatures_log
+  - gaussian_curvature
+  - mean_curvature
+  - gaussian_curvature_sc
+  - mean_curvature_sc
+  - ltp
+  - ltp_rgb
+  - ltp_hsv
+  - gabor
+  - gabor_rgb
+  - gabor_hsv
+  ltp_config:
+    texture_extraction:
+      local_ternary_pattern:
+        n_neighbors: 8
+        radius: 1.0
+        threshold: 5.0
+        method: uniform
+  gabor_config:
+    wavelengths: [4.0, 8.0, 16.0]
+    n_orientations: 4
+    method: fft
+  save_raw_obs: false
+sensor_module_1:
+  _target_: tbp.monty.frameworks.models.sensor_modules.Probe
+  sensor_module_id: view_finder
+  save_raw_obs: false

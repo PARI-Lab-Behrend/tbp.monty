@@ -138,9 +138,12 @@ def already_in_list(
                         redundant_point = False
                         break
 
-                elif feature in {"distance", "ltp", "ltp_rgb", "ltp_hsv"}:
+                elif feature in {
+                    "distance", "ltp", "ltp_rgb", "ltp_hsv", "gabor", "gabor_rgb",
+                    "gabor_hsv",
+                }:
                     pass
-                    # Never use LTP for redundancy checking, so as to ensure it
+                    # Never use LTP (or Gabor) for redundancy checking, so as to ensure it
                     # does not modify the number of points in the graph when
                     # included. This way models will be of equal density/sparsity
                     # with or without LTP.

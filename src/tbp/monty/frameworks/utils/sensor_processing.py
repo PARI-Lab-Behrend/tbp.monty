@@ -362,6 +362,185 @@ def get_ltp_hsv_texture_feature_vector(
 
     return np.concatenate(channel_hists).astype(np.float32, copy=False)
 
+#: Default Gabor bank: 4 orientations x 3 wavelengths (pixels) -> 12 filters, and
+#: per filter the mean and std of the response magnitude -> 24 values per channel.
+GABOR_DEFAULT_WAVELENGTHS = (4.0, 8.0, 16.0)
+GABOR_DEFAULT_N_ORIENTATIONS = 4
+
+GaborMethod = Literal["fft", "spatial"]
+
+
+@lru_cache(maxsize=None)
+def _gabor_kernels(
+    wavelengths: tuple[float, ...], n_orientations: int
+) -> tuple[np.ndarray, ...]:
+    """Complex Gabor kernels, wavelength-major then orientation (cached)."""
+    from skimage.filters import gabor_kernel
+
+    return tuple(
+        np.asarray(gabor_kernel(1.0 / wavelength, theta=np.pi * k / n_orientations))
+        for wavelength in wavelengths
+        for k in range(n_orientations)
+    )
+
+
+def _gabor_magnitudes(
+    channel: np.ndarray, kernels: tuple[np.ndarray, ...], method: GaborMethod
+) -> list[np.ndarray]:
+    """Response magnitude of each kernel over ``channel``, same shape as ``channel``.
+
+    The channel is reflect-padded by the largest kernel half-width and the result
+    cropped back, so the ``fft`` and ``spatial`` paths compute the same values (to
+    floating-point precision) and neither treats the patch border as black.
+    """
+    from scipy.ndimage import convolve
+    from scipy.signal import fftconvolve
+
+    pad = max(k.shape[0] for k in kernels) // 2
+    pad = min(pad, min(channel.shape) - 1)  # numpy reflect padding limit
+    padded = np.pad(channel, pad, mode="reflect")
+    crop = (slice(pad, pad + channel.shape[0]), slice(pad, pad + channel.shape[1]))
+
+    magnitudes = []
+    for kernel in kernels:
+        if method == "fft":
+            response = fftconvolve(padded, kernel, mode="same")
+        elif method == "spatial":
+            response = convolve(padded, kernel.real, mode="reflect") + 1j * convolve(
+                padded, kernel.imag, mode="reflect"
+            )
+        else:
+            raise ValueError(f"Unknown Gabor method {method!r}; use 'fft' or 'spatial'.")
+        magnitudes.append(np.abs(response[crop]))
+    return magnitudes
+
+
+def get_gabor_texture_feature_vector(
+    channel: np.ndarray,
+    config: dict | None = None,
+    mask: np.ndarray | None = None,
+) -> np.ndarray:
+    """Gabor texture descriptor of one image channel.
+
+    A bank of ``n_orientations`` x ``len(wavelengths)`` complex Gabor filters
+    (``skimage.filters.gabor_kernel``) is applied to the channel; for each filter
+    the mean and standard deviation of the response magnitude over the selected
+    pixels form two values. The vector is L2-normalized, so it describes the
+    *shape* of the texture's frequency/orientation energy rather than its overall
+    contrast, and two descriptors are compared by Euclidean distance (in [0, 2]).
+
+    Args:
+        channel: 2-D image channel; integer images are scaled from 0-255 to 0-1.
+        config: Optional ``{"wavelengths": [...], "n_orientations": int,
+            "method": "fft" | "spatial"}``. Defaults: wavelengths 4, 8, 16 px,
+            4 orientations, ``fft``.
+        mask: Optional boolean array, same shape as ``channel``, selecting the
+            pixels the statistics are taken over. Filtering always runs over the
+            full channel.
+
+    Returns:
+        ``2 * n_filters`` float32 values (mean, std per filter, wavelength-major).
+        All zeros if the mask selects no pixel or every response is zero; a zero
+        vector is equidistant (distance 1) from every unit-norm stored descriptor,
+        so it contributes no differential evidence.
+    """
+    config = config or {}
+    wavelengths = tuple(float(w) for w in config.get("wavelengths", GABOR_DEFAULT_WAVELENGTHS))
+    n_orientations = int(config.get("n_orientations", GABOR_DEFAULT_N_ORIENTATIONS))
+    method = config.get("method", "fft")
+
+    image = np.asarray(channel, dtype=np.float64)
+    if np.issubdtype(np.asarray(channel).dtype, np.integer):
+        image = image / 255.0
+    kernels = _gabor_kernels(wavelengths, n_orientations)
+    n_values = 2 * len(kernels)
+
+    if mask is not None and not np.any(mask):
+        return np.zeros(n_values, dtype=np.float32)
+    values = []
+    for magnitude in _gabor_magnitudes(image, kernels, method):
+        selected = magnitude if mask is None else magnitude[mask]
+        values.extend((selected.mean(), selected.std()))
+    vector = np.asarray(values)
+    norm = np.linalg.norm(vector)
+    if norm == 0:
+        return np.zeros(n_values, dtype=np.float32)
+    return (vector / norm).astype(np.float32)
+
+
+def get_gabor_rgb_texture_feature_vector(
+    rgb_patch: np.ndarray,
+    config: dict | None = None,
+    mask: np.ndarray | None = None,
+) -> np.ndarray:
+    """Per-channel Gabor descriptors of the R, G and B channels, concatenated.
+
+    Each channel keeps its own L2 normalization, so the channels contribute
+    equally to the Euclidean distance over the concatenation (the color analogue
+    of :func:`get_ltp_rgb_texture_feature_vector`).
+
+    Args:
+        rgb_patch: ``(H, W, C)`` patch with ``C >= 3``; only R, G, B are used.
+        config: As for :func:`get_gabor_texture_feature_vector`.
+        mask: Optional ``(H, W)`` boolean pixel selection, shared by all channels.
+
+    Returns:
+        ``3 * 2 * n_filters`` float32 values, ordered R, G, B.
+
+    Raises:
+        ValueError: If ``rgb_patch`` has fewer than three channels.
+    """
+    if rgb_patch.ndim != 3 or rgb_patch.shape[-1] < LTP_RGB_N_CHANNELS:
+        raise ValueError(
+            "`rgb_patch` must have shape (H, W, C) with at least "
+            f"{LTP_RGB_N_CHANNELS} color channels, got {rgb_patch.shape}."
+        )
+    return np.concatenate(
+        [
+            get_gabor_texture_feature_vector(rgb_patch[:, :, c], config, mask=mask)
+            for c in range(LTP_RGB_N_CHANNELS)
+        ]
+    ).astype(np.float32, copy=False)
+
+
+def get_gabor_hsv_texture_feature_vector(
+    rgb_patch: np.ndarray,
+    config: dict | None = None,
+    mask: np.ndarray | None = None,
+) -> np.ndarray:
+    """Per-channel Gabor descriptors of hue, saturation and value, concatenated.
+
+    Hue is circular, and filtering it directly would turn the 0/360 wrap into a
+    false edge. It is therefore represented by the two smooth channels
+    ``S * cos(H)`` and ``S * sin(H)`` (saturation-weighted, so the hue of
+    near-gray pixels, which is noise, carries little energy), followed by S and V.
+
+    Args:
+        rgb_patch: ``(H, W, C)`` patch with ``C >= 3``; only R, G, B are used.
+        config: As for :func:`get_gabor_texture_feature_vector`.
+        mask: Optional ``(H, W)`` boolean pixel selection, shared by all channels.
+
+    Returns:
+        ``4 * 2 * n_filters`` float32 values, ordered S*cos(H), S*sin(H), S, V.
+
+    Raises:
+        ValueError: If ``rgb_patch`` has fewer than three channels.
+    """
+    if rgb_patch.ndim != 3 or rgb_patch.shape[-1] < LTP_HSV_N_CHANNELS:
+        raise ValueError(
+            "`rgb_patch` must have shape (H, W, C) with at least "
+            f"{LTP_HSV_N_CHANNELS} color channels, got {rgb_patch.shape}."
+        )
+    rgb = rgb_patch[:, :, :LTP_HSV_N_CHANNELS].astype(np.float64)
+    if np.issubdtype(rgb_patch.dtype, np.integer):
+        rgb = rgb / 255.0
+    hsv = rgb2hsv(rgb)
+    hue, sat, val = 2 * np.pi * hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    channels = (sat * np.cos(hue), sat * np.sin(hue), sat, val)
+    return np.concatenate(
+        [get_gabor_texture_feature_vector(ch, config, mask=mask) for ch in channels]
+    ).astype(np.float32, copy=False)
+
 def local_ternary_pattern_and_hist(
     gray_patch: np.ndarray,
     n_neighbors: int = 8,
