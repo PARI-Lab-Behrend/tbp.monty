@@ -30,6 +30,7 @@ from tbp.monty.frameworks.models.motor_system_state import (
 from tbp.monty.frameworks.sensors import SensorID
 from tbp.monty.frameworks.utils.sensor_processing import (
     LTP_PIXEL_STATS_KEY,
+    get_ltp_hsv_texture_feature_vector,
     get_ltp_rgb_texture_feature_vector,
     get_ltp_texture_feature_vector,
     log_sign,
@@ -137,6 +138,7 @@ class ObservationProcessor:
         "hsv",
         "ltp",
         "ltp_rgb",
+        "ltp_hsv",
         "pose_vectors",
         "principal_curvatures",
         "principal_curvatures_log",
@@ -177,22 +179,25 @@ class ObservationProcessor:
                 "on object" in order to process the observation (i.e., extract
                 features). Defaults to False.
             ltp_config: Configuration for the Local Ternary Pattern (LTP) texture
-                feature extraction. Required when "ltp" or "ltp_rgb" is in
-                `features`; the same config is used for both. Defaults to None.
+                feature extraction. Required when "ltp", "ltp_rgb" or "ltp_hsv" is
+                in `features`; the same config is used for all of them. Defaults to
+                None.
 
         Raises:
-            ValueError: If "ltp" or "ltp_rgb" is in `features` but no `ltp_config`
-                is provided.
+            ValueError: If "ltp", "ltp_rgb" or "ltp_hsv" is in `features` but no
+                `ltp_config` is provided.
         """
         for feature in features:
             assert feature in self.POSSIBLE_FEATURES, (
                 f"{feature} not part of {self.POSSIBLE_FEATURES}"
             )
-        if ("ltp" in features or "ltp_rgb" in features) and ltp_config is None:
+        if (
+            "ltp" in features or "ltp_rgb" in features or "ltp_hsv" in features
+        ) and ltp_config is None:
             raise ValueError(
-                "`ltp`/`ltp_rgb` is in the requested features but no `ltp_config` "
-                "was provided. Pass an `ltp_config` describing the texture "
-                "extraction method (see get_ltp_texture_feature_vector)."
+                "`ltp`/`ltp_rgb`/`ltp_hsv` is in the requested features but no "
+                "`ltp_config` was provided. Pass an `ltp_config` describing the "
+                "texture extraction method (see get_ltp_texture_feature_vector)."
             )
         self._features = features
         self._is_surface_sm = is_surface_sm
@@ -370,6 +375,14 @@ class ObservationProcessor:
             rgb_patch = rgba_feat[:, :, :3]
             on_object_mask = (obs_3d[:, 3] > 0).reshape(rgb_patch.shape[:2])
             features["ltp_rgb"] = get_ltp_rgb_texture_feature_vector(
+                rgb_patch, self._ltp_config, mask=on_object_mask
+            )
+        if "ltp_hsv" in self._features:
+            # One histogram per HSV channel, concatenated: separates the texture of
+            # hue, saturation and value instead of the three additive primaries.
+            rgb_patch = rgba_feat[:, :, :3]
+            on_object_mask = (obs_3d[:, 3] > 0).reshape(rgb_patch.shape[:2])
+            features["ltp_hsv"] = get_ltp_hsv_texture_feature_vector(
                 rgb_patch, self._ltp_config, mask=on_object_mask
             )
 
@@ -630,8 +643,8 @@ class CameraSM(SensorModule):
                 from the previous with tolerances set according to `delta_thresholds`.
                 Defaults to None.
             ltp_config: Configuration for the Local Ternary Pattern (LTP) texture
-                feature extraction. Required when "ltp" or "ltp_rgb" is in
-                `features`. See
+                feature extraction. Required when "ltp", "ltp_rgb" or "ltp_hsv" is
+                in `features`. See
                 :func:`tbp.monty.frameworks.utils.sensor_processing.get_ltp_texture_feature_vector`
                 for the expected structure. Defaults to None.
 
@@ -817,7 +830,7 @@ class FeatureChangeFilter(PerceptFilter):
                     )
                     return True
 
-            elif feature in ("ltp", "ltp_rgb"):
+            elif feature in ("ltp", "ltp_rgb", "ltp_hsv"):
                 pass
                 # Never use LTP for FeatureChange SM, so as to ensure that its
                 # inclusion (or absense) does not modify the number of points

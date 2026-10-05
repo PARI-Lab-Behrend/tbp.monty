@@ -17,18 +17,23 @@ import numpy.testing as npt
 import pytest
 from hypothesis import assume, example, given
 from hypothesis import strategies as st
+from skimage.color import hsv2rgb as hsv_to_rgb
+from skimage.color import rgb2hsv
 
 from tbp.monty.frameworks.utils.sensor_processing import (
     FLAT_THRESHOLD,
+    HUE_PERIOD,
     arc_from_projection,
     bilinear_sample,
     directional_curvature,
     encode_ltp_codes,
+    get_ltp_hsv_texture_feature_vector,
     get_ltp_texture_feature_vector,
     local_ternary_pattern_and_hist,
     ltp_codes,
     ror_encoding,
     uniform_encoding,
+    wrap_to_period,
 )
 from tbp.monty.frameworks.utils.spatial_arithmetics import (
     normalize,
@@ -1031,3 +1036,269 @@ class GetLtpTextureFeatureVectorTest(unittest.TestCase):
         expected = np.concatenate(per_scale).astype(np.float32)
         expected = expected / (expected.sum() + 1e-6)
         npt.assert_allclose(result, expected, rtol=0, atol=1e-6)
+
+
+class WrapToPeriodTest(unittest.TestCase):
+    def test_small_differences_are_unchanged(self):
+        values = np.array([-10.0, -1.0, 0.0, 1.0, 10.0])
+        npt.assert_allclose(wrap_to_period(values, 255.0), values)
+
+    def test_wrap_takes_the_short_way_round(self):
+        # Hue 250 -> 5 is a +10 step forwards, not a -245 step backwards.
+        npt.assert_allclose(wrap_to_period(np.array([5.0 - 250.0]), 255.0), [10.0])
+        npt.assert_allclose(wrap_to_period(np.array([250.0 - 5.0]), 255.0), [-10.0])
+
+    def test_result_lies_in_the_half_open_symmetric_interval(self):
+        values = np.linspace(-1000.0, 1000.0, 4001)
+        wrapped = wrap_to_period(values, HUE_PERIOD)
+        assert np.all(wrapped >= -HUE_PERIOD / 2.0)
+        assert np.all(wrapped < HUE_PERIOD / 2.0)
+
+    def test_wrapping_is_periodic(self):
+        values = np.linspace(-120.0, 120.0, 241)
+        npt.assert_allclose(
+            wrap_to_period(values, HUE_PERIOD),
+            wrap_to_period(values + 3 * HUE_PERIOD, HUE_PERIOD),
+            atol=1e-9,
+        )
+
+
+class CircularLtpCodesTest(unittest.TestCase):
+    def test_smooth_hue_across_the_wrap_sets_no_bits(self):
+        # A patch of nearly-constant red hue that straddles the 0/255 boundary:
+        # every neighbor is within the dead zone once differences are wrapped.
+        rng = np.random.default_rng(101)
+        patch = np.mod(rng.uniform(-2.0, 2.0, size=(9, 9)), HUE_PERIOD)
+
+        pos, neg = ltp_codes(patch, threshold=5.0, circular_period=HUE_PERIOD)
+        assert pos.sum() == 0
+        assert neg.sum() == 0
+
+        # Without the circular treatment the same patch saturates both codes,
+        # which is exactly the failure mode the option exists to fix.
+        linear_pos, linear_neg = ltp_codes(patch, threshold=5.0)
+        assert linear_pos.sum() > 0
+        assert linear_neg.sum() > 0
+
+    def test_codes_are_invariant_to_a_global_hue_rotation(self):
+        # Rotating every hue by the same amount is a relabelling of the circle and
+        # must leave the codes untouched. This is the defining property the linear
+        # implementation lacks.
+        rng = np.random.default_rng(102)
+        patch = rng.uniform(0.0, HUE_PERIOD, size=(11, 11))
+        pos, neg = ltp_codes(patch, threshold=5.0, circular_period=HUE_PERIOD)
+
+        for offset in (1.0, 37.0, 128.0, 254.0):
+            with self.subTest(offset=offset):
+                rotated = np.mod(patch + offset, HUE_PERIOD)
+                rot_pos, rot_neg = ltp_codes(
+                    rotated, threshold=5.0, circular_period=HUE_PERIOD
+                )
+                npt.assert_array_equal(rot_pos, pos)
+                npt.assert_array_equal(rot_neg, neg)
+
+    def test_agrees_with_the_linear_path_in_the_small_angle_limit(self):
+        # Circular sampling interpolates the hue *vector* and takes its direction,
+        # which is the correct mean for an angle but is not the arithmetic mean
+        # once neighbors are widely separated. The two paths therefore converge
+        # only as the spread of hues shrinks -- they are not interchangeable away
+        # from the wrap, they are merely close.
+        rng = np.random.default_rng(103)
+        base = rng.uniform(-1.0, 1.0, size=(9, 9))
+
+        disagreement = []
+        for spread in (40.0, 10.0, 2.0):
+            patch = 128.0 + base * spread
+            circular = ltp_codes(patch, threshold=5.0, circular_period=HUE_PERIOD)
+            linear = ltp_codes(patch, threshold=5.0)
+            disagreement.append(
+                np.mean(circular[0] != linear[0]) + np.mean(circular[1] != linear[1])
+            )
+
+        assert disagreement[-1] == 0.0
+        assert disagreement == sorted(disagreement, reverse=True)
+
+    def test_change_is_concentrated_at_the_wrap(self):
+        # The practical claim: switching a mid-range patch to circular sampling
+        # barely moves its histogram, while switching a patch that straddles the
+        # 0/255 boundary rewrites it.
+        rng = np.random.default_rng(113)
+        base = rng.uniform(-3.0, 3.0, size=(12, 12))
+
+        def l1_shift(center):
+            patch = np.mod(center + base, HUE_PERIOD)
+            circular = local_ternary_pattern_and_hist(
+                patch, threshold=5.0, circular_period=HUE_PERIOD
+            )
+            linear = local_ternary_pattern_and_hist(patch, threshold=5.0)
+            return np.abs(circular - linear).sum()
+
+        assert l1_shift(128.0) < 0.05
+        assert l1_shift(0.0) > 0.5
+
+    def test_interpolation_does_not_average_across_the_wrap(self):
+        # A diagonal neighbor at radius 1 is genuinely interpolated, so the wrap has
+        # to be handled in the interpolator too, not only in the difference. Columns
+        # alternate between hues just either side of 0; the true local variation is
+        # 4, well inside the dead zone.
+        patch = np.tile(np.array([253.0, 2.0]), (8, 4))
+        pos, neg = ltp_codes(patch, threshold=5.0, circular_period=HUE_PERIOD)
+        assert pos.sum() == 0
+        assert neg.sum() == 0
+
+    def test_non_positive_circular_period_raises(self):
+        for period in (0.0, -1.0):
+            with self.subTest(period=period):
+                with pytest.raises(ValueError, match="circular_period"):
+                    ltp_codes(np.zeros((4, 4)), circular_period=period)
+
+
+class SaturationWeightedHistogramTest(unittest.TestCase):
+    def test_zero_weight_pixels_do_not_contribute(self):
+        rng = np.random.default_rng(104)
+        patch = rng.uniform(0.0, 255.0, size=(10, 10))
+        keep = rng.random(patch.shape) > 0.5
+
+        weighted = local_ternary_pattern_and_hist(
+            patch, weights=keep.astype(float)
+        )
+        masked = local_ternary_pattern_and_hist(patch, mask=keep)
+        npt.assert_allclose(weighted, masked, atol=1e-6)
+
+    def test_uniform_weights_only_rescale_the_histogram(self):
+        rng = np.random.default_rng(105)
+        patch = rng.uniform(0.0, 255.0, size=(9, 9))
+        unweighted = local_ternary_pattern_and_hist(patch)
+        weighted = local_ternary_pattern_and_hist(
+            patch, weights=np.full(patch.shape, 0.25)
+        )
+        npt.assert_allclose(weighted, unweighted, atol=1e-6)
+
+    def test_all_zero_weights_give_an_empty_histogram(self):
+        patch = np.random.default_rng(106).uniform(0.0, 255.0, size=(7, 7))
+        hist = local_ternary_pattern_and_hist(
+            patch, weights=np.zeros(patch.shape)
+        )
+        npt.assert_array_equal(hist, np.zeros_like(hist))
+
+    def test_weights_shape_mismatch_raises(self):
+        patch = np.zeros((6, 6))
+        with pytest.raises(ValueError, match="`weights` shape must match"):
+            local_ternary_pattern_and_hist(patch, weights=np.ones((3, 3)))
+
+    def test_circular_period_rejected_for_local_binary_pattern(self):
+        config = {
+            "texture_extraction": {
+                "local_binary_pattern": {"n_neighbors": 8, "radius": 1.0}
+            }
+        }
+        with pytest.raises(ValueError, match="not supported by `local_binary_pattern`"):
+            get_ltp_texture_feature_vector(
+                np.zeros((5, 5)), config, circular_period=HUE_PERIOD
+            )
+
+
+class LtpHsvHueHandlingTest(unittest.TestCase):
+    @staticmethod
+    def _config(**overrides) -> dict:
+        config = {
+            "texture_extraction": {
+                "local_ternary_pattern": {
+                    "n_neighbors": 8,
+                    "radius": 1.0,
+                    "threshold": 5.0,
+                    "method": "uniform",
+                }
+            }
+        }
+        config.update(overrides)
+        return config
+
+    @staticmethod
+    def _red_patch_straddling_the_wrap(seed: int) -> np.ndarray:
+        # Hues just either side of pure red, i.e. either side of the 0/255 wrap,
+        # at full saturation and mid brightness.
+        rng = np.random.default_rng(seed)
+        hue = np.mod(rng.uniform(-3.0, 3.0, size=(12, 12)), 255.0) / 255.0
+        hsv = np.stack(
+            [hue, np.full(hue.shape, 0.9), np.full(hue.shape, 0.5)], axis=-1
+        )
+        return hsv_to_rgb(hsv)
+
+    def test_hue_block_is_circular_by_default(self):
+        rgb = self._red_patch_straddling_the_wrap(107)
+        circular = get_ltp_hsv_texture_feature_vector(rgb, self._config())
+        linear = get_ltp_hsv_texture_feature_vector(
+            rgb, self._config(hue_handling="linear")
+        )
+
+        n_bins = circular.size // 3
+        # S and V are untouched by the hue handling.
+        npt.assert_allclose(circular[n_bins:], linear[n_bins:], atol=1e-6)
+        # The H block is not: the linear path reads the wrap as a huge gradient.
+        assert not np.allclose(circular[:n_bins], linear[:n_bins], atol=1e-6)
+
+    def test_linear_setting_reproduces_the_original_feature(self):
+        # The pre-existing behavior stays reachable so it can serve as the
+        # comparison arm rather than being silently replaced.
+        rgb = self._red_patch_straddling_the_wrap(108)
+        config = self._config(hue_handling="linear", hue_saturation_weighting=False)
+        result = get_ltp_hsv_texture_feature_vector(rgb, config)
+
+        hsv_patch = rgb2hsv(rgb.astype(np.float32)) * 255.0
+        expected = np.concatenate(
+            [
+                get_ltp_texture_feature_vector(hsv_patch[:, :, channel], config)
+                for channel in range(3)
+            ]
+        ).astype(np.float32)
+        npt.assert_array_equal(result, expected)
+
+    def test_desaturated_pixels_are_down_weighted_in_the_hue_block(self):
+        # Half the patch is gray, where hue is arbitrary noise. With saturation
+        # weighting that half must not shape the hue histogram.
+        rng = np.random.default_rng(109)
+        hue = rng.uniform(0.0, 1.0, size=(12, 12))
+        saturation = np.full(hue.shape, 0.9)
+        saturation[:, :6] = 0.0
+        hsv = np.stack([hue, saturation, np.full(hue.shape, 0.5)], axis=-1)
+        rgb = hsv_to_rgb(hsv)
+
+        weighted = get_ltp_hsv_texture_feature_vector(rgb, self._config())
+        n_bins = weighted.size // 3
+
+        # Same colored half, different noise in the gray half.
+        hue_alt = hue.copy()
+        hue_alt[:, :6] = rng.uniform(0.0, 1.0, size=(12, 6))
+        rgb_alt = hsv_to_rgb(
+            np.stack([hue_alt, saturation, np.full(hue.shape, 0.5)], axis=-1)
+        )
+        weighted_alt = get_ltp_hsv_texture_feature_vector(rgb_alt, self._config())
+
+        npt.assert_allclose(weighted[:n_bins], weighted_alt[:n_bins], atol=1e-6)
+
+    def test_fully_gray_patch_yields_an_empty_hue_block(self):
+        gray = np.full((10, 10, 3), 0.4, dtype=np.float32)
+        result = get_ltp_hsv_texture_feature_vector(gray, self._config())
+        n_bins = result.size // 3
+        # No saturation anywhere, so hue carries no mass and contributes no
+        # evidence, rather than contributing fabricated evidence.
+        npt.assert_array_equal(result[:n_bins], np.zeros(n_bins, dtype=np.float32))
+
+    def test_hue_block_is_invariant_to_a_global_hue_rotation(self):
+        rng = np.random.default_rng(110)
+        hue = rng.uniform(0.0, 1.0, size=(12, 12))
+        hsv = np.stack(
+            [hue, np.full(hue.shape, 0.9), np.full(hue.shape, 0.5)], axis=-1
+        )
+        baseline = get_ltp_hsv_texture_feature_vector(
+            hsv_to_rgb(hsv), self._config()
+        )
+        n_bins = baseline.size // 3
+
+        rotated_hsv = hsv.copy()
+        rotated_hsv[:, :, 0] = np.mod(hue + 0.37, 1.0)
+        rotated = get_ltp_hsv_texture_feature_vector(
+            hsv_to_rgb(rotated_hsv), self._config()
+        )
+        npt.assert_allclose(rotated[:n_bins], baseline[:n_bins], atol=2e-3)

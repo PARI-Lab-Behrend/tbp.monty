@@ -84,16 +84,17 @@ class DefaultFeatureEvidenceCalculator:
     )
     CIRCULAR_FEATURES = frozenset({"hsv"})
     CATEGORICAL_FEATURES = frozenset({"object_id"})
-    # `ltp_rgb` stores one histogram per color channel back to back. It is scored as a
-    # single histogram rather than channel by channel because the Bhattacharyya
-    # coefficient is additive across bins and the channels contribute equally many
-    # pixels: the Hellinger distance over the concatenation is exactly the
-    # root-mean-square of the three per-channel Hellinger distances, so the channels
-    # are already compared independently and then pooled.
-    HISTOGRAM_FEATURES = frozenset({"ltp", "ltp_rgb"})
+    # `ltp_rgb` and `ltp_hsv` each store one histogram per channel back to back
+    # (R/G/B and H/S/V respectively). They are scored as a single histogram rather
+    # than channel by channel because the Bhattacharyya coefficient is additive
+    # across bins and the channels contribute equally many pixels: the Hellinger
+    # distance over the concatenation is exactly the root-mean-square of the
+    # per-channel Hellinger distances, so the channels are already compared
+    # independently and then pooled.
+    HISTOGRAM_FEATURES = frozenset({"ltp", "ltp_rgb", "ltp_hsv"})
     # Histogram features subject to the patch-intensity reliability gate below. Only
     # the grayscale `ltp` qualifies: the gate is defined in terms of the grayscale
-    # patch statistics, which `ltp_rgb` does not report.
+    # patch statistics, which `ltp_rgb` and `ltp_hsv` do not report.
     GATED_HISTOGRAM_FEATURES = frozenset({"ltp"})
     CIRCULAR_RANGE = 1
 

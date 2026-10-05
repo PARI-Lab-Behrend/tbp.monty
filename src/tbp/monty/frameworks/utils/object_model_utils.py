@@ -138,7 +138,7 @@ def already_in_list(
                         redundant_point = False
                         break
 
-                elif feature in {"distance", "ltp", "ltp_rgb"}:
+                elif feature in {"distance", "ltp", "ltp_rgb", "ltp_hsv"}:
                     pass
                     # Never use LTP for redundancy checking, so as to ensure it
                     # does not modify the number of points in the graph when

@@ -524,6 +524,51 @@ class DefaultFeatureEvidenceCalculatorTest(unittest.TestCase):
         )
         np.testing.assert_allclose(evidence, [1.0], atol=1e-9)
 
+    def test_hsv_histogram_decomposes_over_channels_like_rgb(self) -> None:
+        # `ltp_hsv` is scored exactly like `ltp_rgb`: one equally-sized histogram
+        # per channel (H, S, V), pooled as the root-mean-square of the per-channel
+        # Hellinger distances, so a node matching the query on H and S is not
+        # penalized for them.
+        h_query = [0.25, 0.25, 0.25, 0.25]
+        s_query = [0.10, 0.20, 0.30, 0.40]
+        v_query = [0.40, 0.30, 0.20, 0.10]
+        query_hist = [*h_query, *s_query, *v_query]
+        stored_v = [0.0, 0.0, 0.0, 1.0]
+        stored = np.array(
+            [query_hist, [*h_query, *s_query, *stored_v]],
+            dtype=np.float64,
+        )
+        tolerance = 0.5
+        evidence = self._calculate(
+            stored=stored,
+            query={"ltp_hsv": query_hist},
+            tolerances={"ltp_hsv": tolerance},
+            weights={"ltp_hsv": 1.0},
+            feature_order=["ltp_hsv"],
+        )
+        v_dist = cv2.compareHist(
+            np.array(stored_v, dtype=np.float32),
+            np.array(v_query, dtype=np.float32),
+            cv2.HISTCMP_BHATTACHARYYA,
+        )
+        pooled_dist = np.sqrt((0.0 + 0.0 + v_dist**2) / 3)
+        expected = [1.0, max(0.0, 1.0 - pooled_dist / tolerance)]
+        np.testing.assert_allclose(evidence, expected, atol=1e-6)
+
+    def test_hsv_histogram_ignores_grayscale_reliability_gate(self) -> None:
+        # Like `ltp_rgb`, `ltp_hsv` does not report grayscale patch statistics, so
+        # the dark/uniform-patch gate never fires for it.
+        channel_hist = [0.25, 0.25, 0.25, 0.25]
+        hsv_hist = channel_hist * 3
+        evidence = self._calculate(
+            stored=np.array([hsv_hist], dtype=np.float64),
+            query={"ltp_hsv": hsv_hist, LTP_PIXEL_STATS_KEY: [5.0, 5.0]},
+            tolerances={"ltp_hsv": 0.5},
+            weights={"ltp_hsv": 20.0},
+            feature_order=["ltp_hsv"],
+        )
+        np.testing.assert_allclose(evidence, [1.0], atol=1e-9)
+
 
 if __name__ == "__main__":
     unittest.main()

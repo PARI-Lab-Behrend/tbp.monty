@@ -19,6 +19,7 @@ from skimage.color import rgb2gray
 from tbp.monty.frameworks.models.abstract_monty_classes import SensorObservation
 from tbp.monty.frameworks.models.sensor_modules import CameraSM
 from tbp.monty.frameworks.utils.sensor_processing import (
+    get_ltp_hsv_texture_feature_vector,
     get_ltp_texture_feature_vector,
 )
 
@@ -290,6 +291,59 @@ class CameraSMLtpTest(unittest.TestCase):
         for channel in range(3):
             channel_hist = ltp_rgb[channel * n_bins : (channel + 1) * n_bins]
             assert not np.allclose(channel_hist, gray_hist)
+
+    def test_ltp_config_is_required_when_ltp_hsv_feature_requested(self) -> None:
+        with pytest.raises(ValueError, match="ltp_config"):
+            CameraSM(
+                sensor_module_id="patch",
+                features=["on_object", "ltp_hsv"],
+            )
+
+    def test_process_extracts_per_hsv_channel_ltp_histograms(self) -> None:
+        obs = _make_on_object_observation(seed=7)
+        sm = CameraSM(
+            sensor_module_id="patch",
+            features=["on_object", "ltp_hsv"],
+            ltp_config=LTP_CONFIG,
+        )
+        sm.reset()
+        ctx = Mock()
+        ctx.rng = np.random.RandomState(0)
+        percept = sm.step(ctx, obs)
+
+        ltp_hsv = np.asarray(percept.non_morphological_features["ltp_hsv"])
+        # Three 72-bin ROR histograms (36 per sign), one per HSV channel.
+        assert ltp_hsv.shape == (3 * 72,)
+        # Each channel keeps its own L1 normalization so matching can compare the
+        # channels independently.
+        for channel in range(3):
+            channel_hist = ltp_hsv[channel * 72 : (channel + 1) * 72]
+            np.testing.assert_allclose(channel_hist.sum(), 1.0, atol=1e-3)
+
+        mask = (obs["semantic_3d"][:, 3] > 0).reshape(PATCH_SIZE, PATCH_SIZE)
+        expected = get_ltp_hsv_texture_feature_vector(
+            obs["rgba"][:, :, :3], LTP_CONFIG, mask=mask
+        )
+        np.testing.assert_allclose(ltp_hsv, expected, rtol=0, atol=1e-9)
+
+    def test_ltp_hsv_differs_from_ltp_rgb(self) -> None:
+        # HSV separates the texture of hue, saturation and value; it should not
+        # reproduce the per-primary RGB histograms.
+        obs = _make_on_object_observation(seed=11)
+        sm = CameraSM(
+            sensor_module_id="patch",
+            features=["on_object", "ltp_rgb", "ltp_hsv"],
+            ltp_config=LTP_CONFIG,
+        )
+        sm.reset()
+        ctx = Mock()
+        ctx.rng = np.random.RandomState(0)
+        percept = sm.step(ctx, obs)
+
+        ltp_rgb = np.asarray(percept.non_morphological_features["ltp_rgb"])
+        ltp_hsv = np.asarray(percept.non_morphological_features["ltp_hsv"])
+        assert ltp_hsv.shape == ltp_rgb.shape
+        assert not np.allclose(ltp_hsv, ltp_rgb)
 
 
 if __name__ == "__main__":

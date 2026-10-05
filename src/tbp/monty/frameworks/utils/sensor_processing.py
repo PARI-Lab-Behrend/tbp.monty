@@ -18,6 +18,7 @@ import numpy as np
 import torch
 from numpy.typing import ArrayLike
 from scipy.ndimage import map_coordinates
+from skimage.color import rgb2hsv
 
 from tbp.monty.frameworks.utils.spatial_arithmetics import (
     get_angle_torch,
@@ -46,10 +47,94 @@ LTP_PIXEL_STATS_KEY = "ltp_pixel_stats"
 # feature.
 LTP_RGB_N_CHANNELS = 3
 
+# Number of channels (hue, saturation, value) whose histograms are concatenated to
+# form the `ltp_hsv` feature.
+LTP_HSV_N_CHANNELS = 3
+
+# Period of the hue channel once `get_ltp_hsv_texture_feature_vector` has rescaled
+# it to the 0-255 range the LTP threshold is calibrated for. `rgb2hsv` returns hue
+# in [0, 1) with 1.0 identified with 0.0, so the rescaled channel wraps at 255.
+HUE_PERIOD = 255.0
+
+def wrap_to_period(values: np.ndarray, period: float) -> np.ndarray:
+    """Wrap signed differences of a circular quantity into a symmetric interval.
+
+    Args:
+        values: Signed differences to wrap.
+        period: Period of the circular quantity.
+
+    Returns:
+        The differences wrapped into ``[-period / 2, period / 2)``, so that the
+        shortest way round the circle is always the one reported: on a 0-255 hue
+        channel a step from 250 to 5 is ``+10``, not ``-245``.
+    """
+    half_period = period / 2.0
+    return np.mod(values + half_period, period) - half_period
+
+
+def _normalize_histogram(histogram: np.ndarray) -> np.ndarray:
+    """L1-normalize a histogram in place.
+
+    The epsilon in the denominator makes a histogram that collected no mass at all
+    normalize to zeros rather than NaN. That is the correct neutral outcome and not
+    merely a guard: a zero histogram scores the maximum Hellinger distance of 1.0
+    against every stored node, so the feature contributes zero evidence everywhere
+    and the observation neither helps nor penalizes any hypothesis. Emitting a
+    uniform histogram instead would be worse, since a uniform histogram is *not*
+    equidistant from the stored nodes and would fabricate differential evidence
+    from an observation that carried none.
+
+    Args:
+        histogram: Raw (unnormalized) histogram counts or weights.
+
+    Returns:
+        The L1-normalized histogram.
+    """
+    histogram /= histogram.sum() + 1e-6
+    return histogram
+
+
+def _masked_values_and_weights(
+    codes: np.ndarray,
+    mask: np.ndarray | None,
+    weights: np.ndarray | None,
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Select the code values and per-pixel weights that feed a histogram.
+
+    Args:
+        codes: Encoded pattern codes, one per pixel.
+        mask: Optional boolean array selecting contributing pixels.
+        weights: Optional per-pixel weights, same shape as ``codes``.
+
+    Returns:
+        The selected codes and the matching weights (or ``None`` when unweighted).
+
+    Raises:
+        ValueError: If ``weights`` is provided but its shape does not match
+            ``codes``.
+    """
+    if weights is None:
+        selected_weights = None
+    else:
+        selected_weights = np.asarray(weights, dtype=np.float64)
+        if selected_weights.shape != codes.shape:
+            raise ValueError(
+                "`weights` shape must match the patch shape, got "
+                f"{selected_weights.shape} vs {codes.shape}."
+            )
+
+    if mask is None:
+        return codes.ravel(), (
+            None if selected_weights is None else selected_weights.ravel()
+        )
+    return codes[mask], (None if selected_weights is None else selected_weights[mask])
+
 def get_ltp_texture_feature_vector(
     image_array: np.ndarray,
     config,
     mask: np.ndarray | None = None,
+    circular_period: float | None = None,
+    weights: np.ndarray | None = None,
 ) -> np.ndarray:
     """Build an LTP texture feature vector for an image patch.
 
@@ -65,12 +150,22 @@ def get_ltp_texture_feature_vector(
         mask: Optional boolean array, same shape as ``image_array``, selecting
             which pixels contribute to the histogram. Pixels where the mask is
             ``False`` (e.g. off-object background) are excluded.
+        circular_period: Optional period of a circular channel (e.g. `HUE_PERIOD`
+            for the rescaled hue channel). When set, neighbors are interpolated and
+            compared around the circle instead of on a line. ``None`` (the default)
+            leaves the linear behavior used by every non-angular channel untouched.
+        weights: Optional per-pixel weights, same shape as ``image_array``, applied
+            when accumulating the histogram. Used to down-weight pixels whose value
+            is unreliable (e.g. hue at low saturation) without dropping them.
 
     Returns:
         The normalized texture histogram.
 
     Raises:
-        ValueError: If the texture extraction method is unknown.
+        ValueError: If the texture extraction method is unknown, or if
+            ``circular_period`` is combined with the ``local_binary_pattern``
+            control condition, whose plain ``neighbor >= center`` comparison has no
+            well-defined circular analogue.
     """
     texture_extraction_config = config["texture_extraction"]
 
@@ -84,15 +179,24 @@ def get_ltp_texture_feature_vector(
             threshold=method_config["threshold"],
             method=method_config.get("method", "ror"),
             mask=mask,
+            circular_period=circular_period,
+            weights=weights,
         )
 
     elif method_name == "local_binary_pattern":
+        if circular_period is not None:
+            raise ValueError(
+                "`circular_period` is not supported by `local_binary_pattern`: its "
+                "`neighbor >= center` comparison has no well-defined analogue on a "
+                "circle. Use `local_ternary_pattern` for angular channels."
+            )
         result = local_binary_pattern_and_hist(
             image_array,
             n_neighbors=method_config["n_neighbors"],
             radius=method_config["radius"],
             method=method_config.get("method", "ror"),
             mask=mask,
+            weights=weights,
         )
 
     elif method_name == "multi_scale":
@@ -100,7 +204,11 @@ def get_ltp_texture_feature_vector(
         for nested_cfg in method_config:
             nested_texture_config = {"texture_extraction": nested_cfg}
             result = get_ltp_texture_feature_vector(
-                image_array, nested_texture_config, mask=mask
+                image_array,
+                nested_texture_config,
+                mask=mask,
+                circular_period=circular_period,
+                weights=weights,
             )
             hist = np.asarray(result, dtype=np.float32)
             all_hists.append(hist)
@@ -156,6 +264,104 @@ def get_ltp_rgb_texture_feature_vector(
 
     return np.concatenate(channel_hists).astype(np.float32, copy=False)
 
+def get_ltp_hsv_texture_feature_vector(
+    rgb_patch: np.ndarray,
+    config,
+    mask: np.ndarray | None = None,
+) -> np.ndarray:
+    """Build a per-HSV-channel LTP texture feature vector for an image patch.
+
+    The RGB patch is converted to HSV and the hue, saturation and value channels
+    are each histogrammed independently with the same ``config``, exactly as
+    :func:`get_ltp_rgb_texture_feature_vector` does for R, G and B; the three
+    histograms are concatenated without renormalization, so each keeps its own L1
+    normalization and the Hellinger distance over the concatenation is the
+    root-mean-square of the per-channel distances.
+
+    Where ``ltp_rgb`` sees texture in three correlated additive primaries, this
+    feature separates the texture of brightness (V, close to the grayscale ``ltp``),
+    vividness (S) and hue (H). The H and S channels are less sensitive to overall
+    illumination level than R/G/B, which can help under dim or uneven lighting.
+
+    Hue is a circular quantity and is treated as one by default. Two corrections
+    are applied to the H channel only, and neither touches S or V:
+
+    - **Circular codes.** Neighbors are interpolated around the hue circle and the
+      neighbor-minus-center difference is wrapped into a half-period interval, so a
+      step from hue 250 to hue 5 reads as +10 rather than -245. Under the linear
+      treatment, smooth hue variation across the 0/255 wrap saturated both the
+      positive and the negative code, so reds emitted a near-noise histogram.
+    - **Saturation weighting.** Hue is numerically meaningless as saturation
+      approaches zero (`rgb2hsv` reports an arbitrary hue for a gray pixel), so each
+      pixel's contribution to the H histogram is weighted by its own saturation.
+      Desaturated pixels fade out of the histogram instead of injecting noise into
+      it, and no hard threshold has to be chosen. Weighting changes the shape of the
+      H histogram but not its mass, so the three channels stay equally weighted in
+      the concatenation. The one exception is a patch with no saturated pixels at
+      all: its H histogram collects no mass, normalizes to zeros, and therefore
+      contributes no evidence for that observation -- which is the right answer for
+      a gray patch, whose hue is undefined.
+
+    Both corrections can be switched off through ``config`` to reproduce the
+    original linear-hue feature for comparison -- set ``hue_handling`` to
+    ``"linear"`` and/or ``hue_saturation_weighting`` to ``False``.
+
+    Args:
+        rgb_patch: Image patch of shape ``(H, W, C)`` with ``C >= 3``. Only the
+            first three channels are used, so an RGBA patch may be passed
+            directly. Values may be uint8 ``[0, 255]`` or float ``[0, 1]``.
+        config: Texture-extraction config, as accepted by
+            :func:`get_ltp_texture_feature_vector`.
+        mask: Optional boolean array of shape ``(H, W)`` selecting which pixels
+            contribute to the histograms. The same mask is applied to every
+            channel.
+
+    Returns:
+        The concatenated per-channel texture histograms, ordered H, S, V.
+
+    Raises:
+        ValueError: If ``rgb_patch`` does not have at least three color channels.
+    """
+    if rgb_patch.ndim != 3 or rgb_patch.shape[-1] < LTP_HSV_N_CHANNELS:
+        raise ValueError(
+            "`rgb_patch` must have shape (H, W, C) with at least "
+            f"{LTP_HSV_N_CHANNELS} color channels, got {rgb_patch.shape}."
+        )
+
+    rgb = rgb_patch[:, :, :LTP_HSV_N_CHANNELS].astype(np.float32)
+    if rgb.max() > 1.0:
+        rgb = rgb / 255.0
+    # rgb2hsv returns H, S, V each in [0, 1]; rescale to the 0-255 range the LTP
+    # threshold (default 5.0) is calibrated for, matching the grayscale path.
+    hsv_patch = rgb2hsv(rgb) * 255.0
+
+    hue_is_circular = config.get("hue_handling", "circular") == "circular"
+    weight_hue_by_saturation = config.get("hue_saturation_weighting", True)
+
+    # Saturation back in [0, 1], used as the per-pixel confidence in that pixel's hue.
+    saturation_weights = hsv_patch[:, :, 1] / 255.0
+
+    channel_hists = []
+    for channel in range(LTP_HSV_N_CHANNELS):
+        is_hue_channel = channel == 0
+        channel_hists.append(
+            get_ltp_texture_feature_vector(
+                hsv_patch[:, :, channel],
+                config,
+                mask=mask,
+                circular_period=(
+                    HUE_PERIOD if is_hue_channel and hue_is_circular else None
+                ),
+                weights=(
+                    saturation_weights
+                    if is_hue_channel and weight_hue_by_saturation
+                    else None
+                ),
+            )
+        )
+
+    return np.concatenate(channel_hists).astype(np.float32, copy=False)
+
 def local_ternary_pattern_and_hist(
     gray_patch: np.ndarray,
     n_neighbors: int = 8,
@@ -163,6 +369,8 @@ def local_ternary_pattern_and_hist(
     threshold: float = 5.0,
     method: LTPEncoding = "ror",
     mask: np.ndarray | None = None,
+    circular_period: float | None = None,
+    weights: np.ndarray | None = None,
 ) -> np.ndarray:
     """Compute Local Ternary Pattern features and histogram for a grayscale image patch.
 
@@ -188,42 +396,51 @@ def local_ternary_pattern_and_hist(
             are still computed over the full patch, so masked-in pixels near the
             mask boundary continue to sample their (possibly masked-out)
             neighbors.
+        circular_period: Optional period of a circular channel, forwarded to
+            :func:`ltp_codes`. ``None`` keeps the linear comparison.
+        weights: Optional per-pixel weights, same shape as ``gray_patch``, applied
+            when accumulating the histogram. A pixel with weight 0 contributes
+            nothing but still serves as a neighbor for its neighbors.
 
     Returns:
         Local Ternary Pattern features and histogram.
 
     Raises:
-        ValueError: If ``mask`` is provided but its shape does not match
-            ``gray_patch``.
+        ValueError: If ``mask`` or ``weights`` is provided but its shape does not
+            match ``gray_patch``.
     """
     codes_pos_raw, codes_neg_raw = ltp_codes(
-        gray_patch, n_neighbors=n_neighbors, radius=radius, threshold=threshold
+        gray_patch,
+        n_neighbors=n_neighbors,
+        radius=radius,
+        threshold=threshold,
+        circular_period=circular_period,
     )
 
     codes_pos, n_bins_pos = encode_ltp_codes(codes_pos_raw, n_neighbors, method)
     codes_neg, n_bins_neg = encode_ltp_codes(codes_neg_raw, n_neighbors, method)
 
-    if mask is None:
-        pos_values = codes_pos.ravel()
-        neg_values = codes_neg.ravel()
-    else:
+    if mask is not None:
         mask = np.asarray(mask, dtype=bool)
         if mask.shape != gray_patch.shape:
             raise ValueError(
                 "`mask` shape must match `gray_patch` shape, got "
                 f"{mask.shape} vs {gray_patch.shape}."
             )
-        pos_values = codes_pos[mask]
-        neg_values = codes_neg[mask]
 
-    hist_pos = np.bincount(pos_values, minlength=n_bins_pos).astype(np.float32)
-    hist_neg = np.bincount(neg_values, minlength=n_bins_neg).astype(np.float32)
+    pos_values, pos_weights = _masked_values_and_weights(codes_pos, mask, weights)
+    neg_values, neg_weights = _masked_values_and_weights(codes_neg, mask, weights)
+
+    hist_pos = np.bincount(
+        pos_values, weights=pos_weights, minlength=n_bins_pos
+    ).astype(np.float32)
+    hist_neg = np.bincount(
+        neg_values, weights=neg_weights, minlength=n_bins_neg
+    ).astype(np.float32)
 
     histogram = np.concatenate([hist_pos, hist_neg]).astype(np.float32, copy=False)
 
-    histogram /= histogram.sum() + 1e-6
-
-    return histogram
+    return _normalize_histogram(histogram)
 
 
 def local_binary_pattern_and_hist(
@@ -232,6 +449,7 @@ def local_binary_pattern_and_hist(
     radius: float = 1.0,
     method: LTPEncoding = "ror",
     mask: np.ndarray | None = None,
+    weights: np.ndarray | None = None,
 ) -> np.ndarray:
     """Compute Local Binary Pattern features and histogram for a grayscale patch.
 
@@ -252,32 +470,34 @@ def local_binary_pattern_and_hist(
         mask: Optional boolean array, same shape as ``gray_patch``, selecting
             which pixels contribute to the histogram, as in
             :func:`local_ternary_pattern_and_hist`.
+        weights: Optional per-pixel weights, same shape as ``gray_patch``, as in
+            :func:`local_ternary_pattern_and_hist`.
 
     Returns:
         The L1-normalized Local Binary Pattern histogram.
 
     Raises:
-        ValueError: If ``mask`` is provided but its shape does not match
-            ``gray_patch``.
+        ValueError: If ``mask`` or ``weights`` is provided but its shape does not
+            match ``gray_patch``.
     """
     codes_raw = lbp_codes(gray_patch, n_neighbors=n_neighbors, radius=radius)
     codes, n_bins = encode_ltp_codes(codes_raw, n_neighbors, method)
 
-    if mask is None:
-        values = codes.ravel()
-    else:
+    if mask is not None:
         mask = np.asarray(mask, dtype=bool)
         if mask.shape != gray_patch.shape:
             raise ValueError(
                 "`mask` shape must match `gray_patch` shape, got "
                 f"{mask.shape} vs {gray_patch.shape}."
             )
-        values = codes[mask]
 
-    histogram = np.bincount(values, minlength=n_bins).astype(np.float32)
-    histogram /= histogram.sum() + 1e-6
+    values, pixel_weights = _masked_values_and_weights(codes, mask, weights)
 
-    return histogram
+    histogram = np.bincount(
+        values, weights=pixel_weights, minlength=n_bins
+    ).astype(np.float32)
+
+    return _normalize_histogram(histogram)
 
 
 def lbp_codes(
@@ -338,7 +558,8 @@ def ltp_codes(
     n_neighbors: int = 8,
     radius: float = 1.0,
     threshold: float = 5.0,
-) -> np.ndarray:
+    circular_period: float | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
     """Compute Local Ternary Pattern features for a grayscale image patch.
 
     This implementation leverages the standard split-LTP formulation from Tan and
@@ -361,13 +582,30 @@ def ltp_codes(
             0 removes this dead zone and degenerates the split-LTP into a more
             LBP-style code (a neighbor equal to the center would set both the
             positive and negative bits), so it is not allowed.
+        circular_period: Period of the channel when it is angular rather than
+            linear -- `HUE_PERIOD` for the rescaled hue channel, ``None`` (the
+            default) for every ordinary intensity channel. When set, two things
+            change, and both are needed: neighbors are interpolated around the
+            circle (interpolating hue linearly would average 250 and 5 into 128,
+            turning red into cyan), and the neighbor-minus-center difference is
+            wrapped into `[-period/2, period/2)` before it is thresholded (so a
+            step from 250 to 5 reads as +10 rather than -245). Without the wrap,
+            smooth hue variation across the 0/255 boundary saturates both the
+            positive and the negative code and the histogram degenerates to noise.
+            Note that circular sampling interpolates the unit vector and reports
+            its direction, which is the correct mean for an angle but is not the
+            arithmetic mean of the four samples once they are widely separated. The
+            circular and linear paths therefore differ slightly everywhere, not
+            only at the wrap; the difference is negligible for locally smooth hue
+            and total for hue that crosses the boundary.
 
     Returns:
-        Local Ternary Pattern features.
+        The positive and negative Local Ternary Pattern code maps.
 
     Raises:
         ValueError: If `n_neighbors` is not positive, `radius` is not positive,
-            `threshold` is not positive, or `gray_patch` is not 2D.
+            `threshold` is not positive, `circular_period` is not positive, or
+            `gray_patch` is not 2D.
     """
     if n_neighbors <= 0:
         raise ValueError(f"`n_neighbors` must be positive, got {n_neighbors}.")
@@ -375,6 +613,10 @@ def ltp_codes(
         raise ValueError(f"`radius` must be positive, got {radius}.")
     if threshold <= 0:
         raise ValueError(f"`threshold` must be > 0, got {threshold}.")
+    if circular_period is not None and circular_period <= 0:
+        raise ValueError(
+            f"`circular_period` must be positive, got {circular_period}."
+        )
     if gray_patch.ndim != 2:
         raise ValueError(
             "Must provide a 2D grayscale image patch, got shape", gray_patch.shape
@@ -392,6 +634,16 @@ def ltp_codes(
     codes_pos = np.zeros((h, w), dtype=np.uint32)
     codes_neg = np.zeros((h, w), dtype=np.uint32)
 
+    if circular_period is not None:
+        # Interpolating an angle directly averages across its wrap point, so the
+        # channel is carried as a unit vector and interpolated component-wise. The
+        # trig runs once here rather than once per neighbor.
+        radians = np.asarray(gray_patch, dtype=np.float64) * (
+            2.0 * np.pi / circular_period
+        )
+        cos_image = np.cos(radians)
+        sin_image = np.sin(radians)
+
     # Sample the circular neighborhood, travelling clockwise.
     for i in range(n_neighbors):
         theta = 2.0 * np.pi * i / n_neighbors
@@ -402,10 +654,21 @@ def ltp_codes(
         # to get the neighbor value as the weighted average of the four nearest pixels.
         # This is useful for cases where the radius parameter does not land exactly on
         # pixel coordinates.
-        neighbor = bilinear_sample(gray_patch, yy + dy, xx + dx)
+        if circular_period is None:
+            neighbor = bilinear_sample(gray_patch, yy + dy, xx + dx)
 
-        pos_bit = (neighbor >= (gray_patch + threshold)).astype(np.uint32)
-        neg_bit = (neighbor <= (gray_patch - threshold)).astype(np.uint32)
+            pos_bit = (neighbor >= (gray_patch + threshold)).astype(np.uint32)
+            neg_bit = (neighbor <= (gray_patch - threshold)).astype(np.uint32)
+        else:
+            neighbor_angle = np.arctan2(
+                bilinear_sample(sin_image, yy + dy, xx + dx),
+                bilinear_sample(cos_image, yy + dy, xx + dx),
+            )
+            neighbor = neighbor_angle * (circular_period / (2.0 * np.pi))
+            difference = wrap_to_period(neighbor - gray_patch, circular_period)
+
+            pos_bit = (difference >= threshold).astype(np.uint32)
+            neg_bit = (difference <= -threshold).astype(np.uint32)
 
         # For each pixel in the original patch shift the bit values left by i with <<
         # operator (equivalent to multiplying by 2^i). This ensures each neighbor's bit
