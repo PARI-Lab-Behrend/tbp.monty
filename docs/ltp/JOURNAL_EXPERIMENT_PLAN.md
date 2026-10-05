@@ -107,7 +107,7 @@ ready-made compositions (material-to-part assignments) per shape.
 | Name in paper | Design | Objects | Question it answers |
 |---|---|---|---|
 | **3DC-Texture** | 10 shapes from 10 classes, each in one of the dataset's own compositions, x 5 variants that differ only in the material of the most visible *slot* (the parts sharing one material), swapped for other materials of the same family closest in mean color | 50 | Can texture separate objects when shape *and* color mostly cannot? (the hard case) |
-| **3DC-Mixed** | 30 classes x 2 shapes x 1 dataset composition (multi-material, as shipped) | 60 | Does LTP still help -- or at least not hurt -- in ordinary recognition where shape usually separates objects? |
+| **3DC-Mixed** | 60 shapes over 28 classes (2 per class; 7 classes have 3 to make up for classes with fewer passing shapes), 1 dataset composition each (multi-material, as shipped) | 60 | Does LTP still help -- or at least not hurt -- in ordinary recognition where shape usually separates objects? |
 
 Why these two: 3DC-Texture is the stress test (like YCB-11R but 5x larger and
 with 10 geometries); 3DC-Mixed is the realism check (like YCB-77). A paper
@@ -142,6 +142,23 @@ Optional third set if time remains: 3DC-Texture-L, 20 shapes x 8 materials =
    - 3DC-Mixed: 2 random shapes per class (fixed seed), composition 0 of each.
    - Phase 2 subsets: one shape from each of 3 distinct families (currently
      jug / metal, ottoman / leather, table / wood), at each `target_size`.
+   - With `--candidates N`: instead of picking the first qualifying
+     candidate, write ranked candidates per class for step 2b.
+2b. **Shape selection (run once, then frozen; done 2026-10-04).** The first
+   recipes failed Prelim A: the surface agent lost many shapes, and on 4
+   3DC-Texture shapes the patch never reached the varied slot.
+   `scripts/compat3d_test/select_dataset_shapes.py` builds and walks each
+   class's candidates in order (real 200-step ambient surface walks from
+   [0,0,0] and [90,0,0]) and keeps the first that passes: on-object > 0.9;
+   for 3DC-Texture also slot visits >= 0.4 (variants walk identical paths, so
+   steps where base and variant patches differ are steps on the slot) and every
+   variant's slot brightness >= 0.15. Its output overwrote the recipes, which
+   are now the frozen dataset definition, plus `selection_log.csv` (every
+   candidate and its rejection reason). Final 3DC-Texture classes: table,
+   love_seat, stool (wood); sofa, bed (fabric); chair, ottoman (leather);
+   vase, jug (metal); toilet (marble) -- dresser and cabinet replaced after
+   failing 30 candidates each. Final 3DC-Mixed: 60 shapes over 28 classes
+   (shelf and skateboard had no passing shape).
 3. Build with `python compat3d_helper.py --zip ... --recipe <r>.yaml --build`.
    Building is cheap (~3.5 min per 50 objects), so build **both full sets at
    all three Phase 2 sizes (0.12, 0.25, 0.5 m) on day 1** instead of waiting

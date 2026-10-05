@@ -15,13 +15,13 @@ Last updated: 2026-10-04
 |---|---|---|---|
 | Build tooling (`material_stats.py`, `make_recipes.py`) | done | `material_stats.csv`, recipe YAMLs | 3DC-Texture design approved by user 2026-10-04 |
 | Phase 2 -- scale / footprint sweep (ambient) | done | `target_size` decision | **0.12 m kept** (user decision); rule would pick 0.25 m by a small margin. Results below |
-| Datasets 3DC-Texture (50) + 3DC-Mixed (60) | todo | `$MONTY_DATA/compat3d_texture`, `compat3d_mixed` | Build at all 3 sizes on day 1 (no longer waits for Phase 2) |
-| Phase 1 Prelim A -- asset sanity | todo | 100% pass on 5 checks + contact sheet | |
+| Datasets 3DC-Texture (50) + 3DC-Mixed (60) | **done, frozen** | `$MONTY_DATA/compat3d_texture`, `compat3d_mixed` | Shapes chosen once by `select_dataset_shapes.py` (Prelim A walk rule); recipes frozen in `~/3dcompat-habitat-prep/recipes/` |
+| Phase 1 Prelim A -- asset sanity | **done** | 100% pass on 5 checks + contact sheet | Passed via selection: every frozen object meets the walk rule; final static checks clean |
 | Phase 1 Prelim B -- headroom | todo | `hsv` baseline in 30-80% on 3DC-Texture | |
 | Phase 1 Prelim C -- smoke + compute budget | todo | budget arithmetic written into this doc | Also gates combined-feature training and checks step caps |
 | Phase 3 -- color space pilot (`ltp_rgb` vs `ltp_hsv`, ambient) | todo | decision record | Evals on the main models; no longer gates training |
 | Phase 4 -- tolerance calibration | todo | tolerance per feature, per lighting | |
-| Gabor feature (`gabor`, `gabor_rgb`, `gabor_hsv`) | todo | functions + unit tests + FFT path | **On the critical path** (days 1-2): the main trainings store it |
+| Gabor feature (`gabor`, `gabor_rgb`, `gabor_hsv`) | done | functions + unit tests + FFT path | Extraction, CameraSM, evidence calculator (RMS of per-channel Euclidean), excluded from node-keeping; 21 new tests; full unit suite 668 pass |
 | Phase 5 -- main comparison: ambient (primary), then directional | todo | accuracy/steps table per scenario, McNemar/Wilcoxon, interaction CI | 4 combined-feature trainings (2 datasets x 2 lightings) |
 | Phase 6 -- wall time | todo | per-patch µs, per-step, time-to-correct | No timing harness yet |
 | Phase 7 -- robustness (ambient) | todo | noise / footprint mismatch / threshold | Lighting is a Phase 5 scenario, not an ablation |
@@ -77,6 +77,9 @@ Record each with date, the evidence, and the rule applied.
 | Patch footprint at `target_size` 0.12 | 3.9 mm of surface (~3% of object) | 2026-10-04 | Raw sensor arrays from a real ottoman episode; judged usable by user. Phase 2 still decides `target_size` |
 | Color LTP winner (`ltp_rgb` or `ltp_hsv`) | -- | | Phase 3 rule: `ltp_hsv` only if ≥ 3 points better on both sets |
 | Tolerances per feature | -- | | Phase 4 |
+| Dataset shape selection rule | 200-step ambient walks from [0,0,0] and [90,0,0]: on-object > 0.9 (mean); 3DC-Texture also slot visits >= 0.4 and every variant's slot brightness >= 0.15 | 2026-10-04 | User-approved; run once, recipes frozen. Log: `selection_log.csv` (prep `recipes/`, copy in `docs/ltp/results/prelim_a/`) |
+| 3DC-Texture classes | table, love_seat, stool (wood); sofa, bed (fabric); chair, ottoman (leather); vase, jug (metal); toilet (marble) | 2026-10-04 | dresser and cabinet failed all 30 candidates each; user chose to swap in classes; love_seat and stool were the first two passing (garbage_bin, bag also passed, not needed) |
+| 3DC-Mixed classes | 28 classes, 60 shapes | 2026-10-04 | shelf and skateboard had no passing shape in 20; cabinet, dishwasher, dresser 1 each; 7 classes topped up to 3 to keep 60 |
 | Primary lighting scenario | ambient (`AMBIENT_LIGHTS`); directional is the second scenario | 2026-10-04 | User decision: ambient is the default all phases run in |
 | Tolerances per feature, directional | -- | | Phase 4 rule on directional training graphs; directional models also evaluated at ambient tolerances |
 | Directional-scenario conditions | all 8 Phase 5 conditions (provisional) | | Cut to baseline / proposed / `ltp` / Gabor matched if the Prelim C budget requires |
@@ -110,6 +113,42 @@ sampling seed 0; evidence gap for seeds 1 and 2 in parentheses. CSVs:
 - Compute: `run_parallel.py` (one process per object) took ~11 min per size,
   all three concurrently; the sequential `run.py` pace was ~40 min per size.
 
+## Prelim A results (2026-10-04, 0.12 m)
+
+**Final (frozen datasets):** static checks clean (no duplicates, no
+`placeholder`, sizes 0.12 m +- 2%). On-object from start rotation [0,0,0]
+alone: median 1.00 (Texture) / 0.99 (Mixed); 1 Texture shape (table, 0.85) and
+8 Mixed objects (0.81-0.90) are below 0.9 from that single start but passed the
+2-start mean. Patch brightness median V: ambient 0.27 / 0.36, directional
+0.24 / 0.29; objects with any nearly-black step: ambient 5 / 5, directional
+14 / 17. Selection tried 102 Texture candidates and 295 Mixed candidates (log rows).
+CSVs: `docs/ltp/results/prelim_a/*_final.csv`, `selection_log.csv`.
+
+**Before selection** (first recipes; kept for the record, `*_preselection.csv`):
+
+`scripts/compat3d_test/prelim_a_checks.py`: static checks plus a real 200-step
+surface-agent walk per object (rotation [0,0,0]) under each lighting. CSVs in
+`docs/ltp/results/prelim_a/`.
+
+- **Static: all pass** -- no duplicates, no `placeholder`, every max extent
+  0.12 m +- 2%, every object loads and walks.
+- **On-object (patch centre on the object, pass > 0.9): fails widely.**
+  3DC-Texture median 0.79, 30/50 objects fail; 3DC-Mixed median 0.86, 31/60
+  fail. The metric is sound: on the old 11-object set the solid ottoman,
+  bench and table score 0.99-1.0, its open-frame chair 0.57 and boat 0.32.
+- **3DC-Texture per shape** (on-object; do the 5 variants' patch statistics
+  differ under ambient light?): dresser 0.81, no; table 0.04, no (patch stays
+  on the crossed legs); cabinet 0.99, no; sofa 0.77, yes; bed 0.58, no;
+  chair 1.00, yes; ottoman 0.59, yes (seat reached only late); vase 0.58, yes;
+  jug 1.00, yes; toilet 1.00, yes. "No" = the walk essentially never reached
+  the varied slot.
+- **Brightness:** median patch V, ambient 0.28 (Texture) / 0.34 (Mixed);
+  directional 0.19 / 0.30. Under directional light the chair leathers drop to
+  V 0.02-0.06 (black); nearly-black steps appear for 18/50 Texture objects
+  (dir) and 13-17/60 Mixed objects.
+- Caveat: one start rotation, 200 steps; training uses 14 rotations x 1000
+  steps, eval random rotations x up to 500 steps.
+
 ## Compute budget (fill from Prelim C)
 
 - s / training episode (50-obj, 60-obj): --
@@ -119,6 +158,25 @@ sampling seed 0; evidence gap for seeds 1 and 2 in parentheses. CSVs:
 ## Log
 
 Newest first. One or two lines each: what ran, result, where the output is.
+
+- **2026-10-04** -- Datasets frozen. `select_dataset_shapes.py` built and
+  walked ranked candidates (`make_recipes.py --candidates`) per class and kept
+  the first passing; recipes overwritten with the frozen selection (header
+  says do not regenerate) plus `selection_log.csv`. Texture: dresser and
+  cabinet failed 30 candidates each -> love_seat, stool. Rebuilt both sets in
+  `$MONTY_DATA` from the frozen recipes; final Prelim A clean. Gabor wired into
+  CameraSM / calculator / graph code; combined-feature SM config
+  `monty/sensor_module/journal/camera_surf_rgba_all_texture.yaml`.
+
+- **2026-10-04** -- Built `compat3d_texture` and `compat3d_mixed` at 0.12 m;
+  ran Prelim A (results section above): static checks pass, on-object and
+  slot-visit checks fail for many shapes. Found why `max_total_steps=200`
+  didn't cap episodes: `monty_experiment.py:187` resets it to
+  `num_exploratory_steps + max_train_steps` when below `num_exploratory_steps`
+  (1000), so walks must also set `monty_args.num_exploratory_steps`. Gabor
+  extraction functions written (`gabor`, `gabor_rgb`, `gabor_hsv`; FFT and
+  spatial paths agree to 1e-5); rough timing 22 ms/patch (FFT) vs `ltp_rgb`
+  4 ms.
 
 - **2026-10-04** -- `target_size` stays **0.12 m**: user judged the Phase 2
   margin for 0.25 m not significant; recorded, revisit if needed. Phase 7's

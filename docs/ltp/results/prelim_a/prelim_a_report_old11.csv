@@ -1,0 +1,12 @@
+object,lighting,walk_ok,steps,frac_center_on_object,median_v,median_gray_std,frac_black
+ottoman_000_leather00,amb,True,200,0.995,0.142,3.21,0.0
+ottoman_000_leather03,amb,True,200,0.995,0.14,3.19,0.0
+ottoman_000_leather09,amb,True,200,0.995,0.142,3.32,0.0
+ottoman_000_leather16,amb,True,200,0.995,0.142,3.32,0.0
+bench_000_wood10,amb,True,200,1.0,0.123,2.68,0.0
+bench_000_wood04,amb,True,200,1.0,0.123,2.68,0.0
+bench_000_wood33,amb,True,200,1.0,0.123,2.68,0.0
+bench_000_wood44,amb,True,200,1.0,0.123,2.68,0.0
+chair_000_regression,amb,True,200,0.565,0.579,15.03,0.0
+table_002_regression,amb,True,200,0.985,0.357,4.41,0.0
+boat_000_regression,amb,True,200,0.32,0.167,3.06,0.0
