@@ -224,8 +224,8 @@ Confirms every feature reaches the learning module and measures cost.
   Runs at the chosen `target_size` on day 2 (or at 0.12 on day 1 if Gabor is
   not ready, then repeated for the budget).
 - Pass criteria:
-  - saved graphs contain the feature with the expected length (e.g. 3 x 118
-    for `ltp_rgb` uniform);
+  - saved graphs contain the feature with the expected length (e.g. 3 x 20
+    for `ltp_rgb` uniform with 8 neighbors);
   - the feature contributes nonzero evidence at least once (log per-feature
     evidence for one episode);
   - rerunning with the same seed gives identical steps and result

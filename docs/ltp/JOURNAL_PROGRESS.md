@@ -18,7 +18,7 @@ Last updated: 2026-10-04
 | Datasets 3DC-Texture (50) + 3DC-Mixed (60) | **done, frozen** | `$MONTY_DATA/compat3d_texture`, `compat3d_mixed` | Shapes chosen once by `select_dataset_shapes.py` (Prelim A walk rule); recipes frozen in `~/3dcompat-habitat-prep/recipes/` |
 | Phase 1 Prelim A -- asset sanity | **done** | 100% pass on 5 checks + contact sheet | Passed via selection: every frozen object meets the walk rule; final static checks clean |
 | Phase 1 Prelim B -- headroom | todo | `hsv` baseline in 30-80% on 3DC-Texture | |
-| Phase 1 Prelim C -- smoke + compute budget | todo | budget arithmetic written into this doc | Also gates combined-feature training and checks step caps |
+| Phase 1 Prelim C -- smoke + compute budget | **done** | budget arithmetic written into this doc | All gates pass; combined-feature training confirmed equivalent. Budget below |
 | Phase 3 -- color space pilot (`ltp_rgb` vs `ltp_hsv`, ambient) | todo | decision record | Evals on the main models; no longer gates training |
 | Phase 4 -- tolerance calibration | todo | tolerance per feature, per lighting | |
 | Gabor feature (`gabor`, `gabor_rgb`, `gabor_hsv`) | done | functions + unit tests + FFT path | Extraction, CameraSM, evidence calculator (RMS of per-channel Euclidean), excluded from node-keeping; 21 new tests; full unit suite 668 pass |
@@ -84,7 +84,7 @@ Record each with date, the evidence, and the rule applied.
 | Tolerances per feature, directional | -- | | Phase 4 rule on directional training graphs; directional models also evaluated at ambient tolerances |
 | Directional-scenario conditions | all 8 Phase 5 conditions (provisional) | | Cut to baseline / proposed / `ltp` / Gabor matched if the Prelim C budget requires |
 | Trainings | 1 combined-feature run per dataset x lighting (4 total) | 2026-10-04 | Texture features don't enter `graph_delta_thresholds`; gate: Prelim C equivalence check |
-| Rotations x seeds for Phase 5 | 5 x 2 (provisional) | | Prelim C budget |
+| Rotations x seeds for Phase 5 | 5 x 2 (provisional) | 2026-10-05 | Prelim C budget: ~6.5 h eval for both lightings; raise to 10 x 2 if real-model episodes average <= 60 s |
 
 ## Phase 2 results (2026-10-04, ambient, `ltp_rgb`)
 
@@ -149,15 +149,59 @@ surface-agent walk per object (rotation [0,0,0]) under each lighting. CSVs in
 - Caveat: one start rotation, 200 steps; training uses 14 rotations x 1000
   steps, eval random rotations x up to 500 steps.
 
-## Compute budget (fill from Prelim C)
+## Prelim C results (2026-10-05, ambient, 3DC-Texture)
 
-- s / training episode (50-obj, 60-obj): --
-- s / eval episode (50-obj, 60-obj): --
-- Arithmetic: --
+Tiny runs: 3 objects (two ottoman variants + a jug), 1 training rotation
+([0,0,0]), 1 random eval rotation, seed 42. Configs from
+`scripts/generate_journal_configs.py`; per-feature evidence recorded with
+`scripts/prelim_c_eval.py`. Accuracy on 3 objects means nothing and is not
+reported.
+
+| Gate | Result |
+|---|---|
+| Graphs store each feature at the expected length | yes: `hsv` 3, `ltp` 20, `ltp_rgb` 60, `ltp_hsv` 60, `gabor` 24, `gabor_rgb` 72, `gabor_hsv` 96 (uniform LTP with 8 neighbors has 20 bins per channel, not 118) |
+| Each feature contributes nonzero evidence | yes, all 12 conditions: max single-feature evidence 1.00 for `hsv` and every LTP feature, 0.79-0.84 for Gabor. Gabor mean evidence is low (~0.02) at its placeholder tolerance 0.30 -- Phase 4 calibrates |
+| **Combined-model equivalence** (gate for 1 training per dataset x lighting) | **pass**: combined vs `ltp_rgb`-only training store identical node positions and identical shared features for all 3 objects (946-982 nodes each); evals give identical target, result, most-likely object, steps and Monty steps per episode for `ltp_rgb` and the `hsv` baseline (3/3 each) |
+| Determinism (same seed twice) | pass: identical per episode (3/3) |
+| Step caps | eval episodes stop at `max_eval_steps` 500 (seen in shape-only runs); training episodes run `num_exploratory_steps` 1000. Walk-length overrides must also set `monty_args.num_exploratory_steps` (see 2026-10-04 log) |
+
+## Compute budget (from Prelim C, 64-core machine)
+
+Measured:
+- Training episode (1000 exploratory steps): **~584 s with the combined
+  sensor module** vs ~177 s `ltp_rgb`-only (3 concurrent processes). The
+  combined module is ~3.3x slower per episode but replaces ~7 per-feature
+  trainings.
+- Eval: **~50-56 ms per Monty step**, flat between 2.9k and 27k graph nodes
+  (3-object model; 15-object Phase 2 model). Episodes took a median 127 Monty
+  steps (3 objects) and 1,009 (15 objects); a full 14-rotation model holds
+  ~8k nodes per object (~400-480k nodes), beyond the measured range.
+
+Arithmetic:
+- Training: 2 datasets x 2 lightings x (50 or 60) objects x 14 rotations =
+  1,540 episodes x ~584 s = ~250 CPU-h. `run_parallel.py` runs one process per
+  object (its 14 rotations in sequence, ~2.3 h); 220 object-processes over 64
+  cores = ~3.4 rounds -> **~8 h wall** for all four trainings.
+- Phase 5 evals: 8 conditions x 110 objects x 5 rotations x 2 seeds = 8,800
+  episodes per lighting. Assuming ~1,500 Monty steps x 55 ms = ~80 s per
+  episode: ~200 CPU-h per lighting -> **~3.3 h wall per lighting** on 60
+  processes, ~6.5 h for both.
+- Phase 3 extras (`ltp_hsv` arms, 2 rotations x 1 seed): < 1 h.
+
+Decision: keep **5 rotations x 2 seeds** (provisional) and re-measure on the
+first ~50 real eval episodes; if they average <= 60 s, raise to 10 rotations
+x 2 seeds (+~6.5 h). The per-step cost at 400k+ nodes is the main uncertainty.
 
 ## Log
 
 Newest first. One or two lines each: what ran, result, where the output is.
+
+- **2026-10-05** -- Prelim C done, all gates pass (section above). Main
+  configs generated by `scripts/generate_journal_configs.py`: 12 conditions
+  (`learning_module/journal/main/`), per-texture eval sensor modules,
+  `env_interface/journal/{train,eval}_3dc_{texture,mixed}`, and 52 experiments
+  (`experiment/journal/pretrain_3dc_*_all_features`, `eval_3dc_<dataset>_<lighting>_<condition>`).
+  Budget: ~8 h for the 4 trainings, ~6.5 h for Phase 5 evals at 5 x 2.
 
 - **2026-10-04** -- Datasets frozen. `select_dataset_shapes.py` built and
   walked ranked candidates (`make_recipes.py --candidates`) per class and kept

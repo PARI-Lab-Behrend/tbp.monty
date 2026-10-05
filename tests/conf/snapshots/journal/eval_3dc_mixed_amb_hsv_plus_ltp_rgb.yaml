@@ -1,0 +1,343 @@
+experiment:
+  config:
+    do_eval: true
+    do_train: false
+    monty_config:
+      monty_class: ${monty.class:tbp.monty.frameworks.models.evidence_matching.model.MontyForEvidenceGraphMatching}
+      monty_args:
+        num_exploratory_steps: 1000
+        min_eval_steps: ${constants.min_eval_steps}
+        min_train_steps: 3
+        max_total_steps: 2500
+      motor_system_config:
+        policy_selector:
+          policy:
+            action_sampler:
+              _target_: tbp.monty.frameworks.actions.action_samplers.ConstantSampler
+              actions:
+              - ${monty.class:tbp.monty.frameworks.actions.actions.MoveForward}
+              - ${monty.class:tbp.monty.frameworks.actions.actions.MoveTangentially}
+              - ${monty.class:tbp.monty.frameworks.actions.actions.OrientHorizontal}
+              - ${monty.class:tbp.monty.frameworks.actions.actions.OrientVertical}
+            _target_: tbp.monty.frameworks.models.motor_policies.SurfacePolicyCurvatureInformed
+            use_goal_driven_actions: true
+            agent_id: agent_id_0
+            desired_object_distance: 0.025
+            alpha: 0.1
+            pc_alpha: 0.5
+            max_pc_bias_steps: 32
+            min_general_steps: 8
+            min_heading_steps: 12
+          _target_: tbp.monty.frameworks.models.motor_policy_selectors.SinglePolicySelector
+        _target_: tbp.monty.frameworks.models.motor_system.MotorSystem
+      learning_modules:
+        learning_module_0:
+          hypotheses_updater_class: ${monty.class:tbp.monty.frameworks.models.evidence_matching.burst_sampling.BurstSamplingHypothesesUpdater}
+          hypotheses_updater_args:
+            max_nneighbors: 5
+          _target_: tbp.monty.frameworks.models.evidence_matching.learning_module.EvidenceGraphLM
+          feature_weights:
+            patch:
+              hsv: ${np.array:[2, 0.5, 0.5]}
+              pose_vectors: ${np.ones:3}
+              principal_curvatures_log: ${np.ones:2}
+              ltp_rgb: 1.0
+          tolerances:
+            patch:
+              hsv: ${np.array:[0.1, 0.2, 0.2]}
+              principal_curvatures_log: ${np.ones:2}
+              ltp_rgb: 0.23
+          max_match_distance: 0.01
+          x_percent_threshold: 20
+          evidence_threshold_config: all
+          max_graph_size: 0.3
+          num_model_voxels_per_dim: 100
+          gsg:
+            _target_: tbp.monty.frameworks.models.goal_generation.EvidenceGoalGenerator
+            goal_tolerances:
+              location: 0.015
+            elapsed_steps_factor: 10
+            min_post_goal_success_steps: 5
+            x_percent_scale_factor: 0.75
+            desired_object_distance: 0.025
+      sensor_modules:
+        sensor_module_0:
+          _target_: tbp.monty.frameworks.models.sensor_modules.CameraSM
+          is_surface_sm: true
+          sensor_module_id: patch
+          features:
+          - pose_vectors
+          - pose_fully_defined
+          - on_object
+          - object_coverage
+          - rgba
+          - hsv
+          - min_depth
+          - mean_depth
+          - principal_curvatures
+          - principal_curvatures_log
+          - gaussian_curvature
+          - mean_curvature
+          - gaussian_curvature_sc
+          - mean_curvature_sc
+          - ltp_rgb
+          ltp_config:
+            texture_extraction:
+              local_ternary_pattern:
+                n_neighbors: 8
+                radius: 1.0
+                threshold: 5.0
+                method: uniform
+          save_raw_obs: false
+        sensor_module_1:
+          _target_: tbp.monty.frameworks.models.sensor_modules.Probe
+          sensor_module_id: view_finder
+          save_raw_obs: false
+      sm_to_agent_dict:
+        patch: agent_id_0
+        view_finder: agent_id_0
+      sm_to_lm_matrix:
+      - - 0
+      lm_to_lm_matrix: null
+      lm_to_lm_vote_matrix: null
+    environment:
+      env_init_args:
+        lights: ${monty.class:tbp.monty.simulators.habitat.simulator.AMBIENT_LIGHTS}
+        objects:
+        - name: coneSolid
+          position:
+          - 0.0
+          - 1.5
+          - -0.1
+        scene_id: null
+        seed: 42
+        data_path: ${path.expanduser:${oc.env:MONTY_DATA}/compat3d_mixed}
+        agents:
+          agent_args:
+            agent_id: agent_id_0
+            sensor_ids:
+            - patch
+            - view_finder
+            height: 0.0
+            position:
+            - 0.0
+            - 1.5
+            - 0.1
+            resolutions:
+            - - 64
+              - 64
+            - - 64
+              - 64
+            positions:
+            - - 0.0
+              - 0.0
+              - 0.0
+            - - 0.0
+              - 0.0
+              - 0.03
+            rotations:
+            - - 1.0
+              - 0.0
+              - 0.0
+              - 0.0
+            - - 1.0
+              - 0.0
+              - 0.0
+              - 0.0
+            semantics:
+            - false
+            - false
+            zooms:
+            - 10.0
+            - 1.0
+            action_space_type: surface_agent
+          agent_type: ${monty.class:tbp.monty.simulators.habitat.MultiSensorAgent}
+      env_init_func: ${monty.class:tbp.monty.simulators.habitat.environment.HabitatEnvironment}
+      transform:
+      - _target_: tbp.monty.frameworks.environment_utils.transforms.MissingToMaxDepth
+        agent_id: agent_id_0
+        max_depth: 1
+      - _target_: tbp.monty.frameworks.environment_utils.transforms.DepthTo3DLocations
+        agent_id: agent_id_0
+        sensor_ids:
+        - patch
+        - view_finder
+        resolutions:
+        - - 64
+          - 64
+        - - 64
+          - 64
+        world_coord: true
+        zooms:
+        - 10.0
+        - 1.0
+        get_all_points: true
+        use_semantic_sensor: false
+    eval_env_interface_class: ${monty.class:tbp.monty.experiment.environment.OneObjectPerEpisodeInterface}
+    eval_env_interface_args:
+      parent_to_child_mapping: null
+      object_names:
+      - bag_057_a8a5231d
+      - bag_086_38874045
+      - basket_035_d2144fa7
+      - basket_05d_75c074c7
+      - bed_0d7_3b430880
+      - bed_00e_6380fc20
+      - bench_0a7_d7d6cd51
+      - bench_1a5_362c165f
+      - bird_house_07e_a512f3f0
+      - bird_house_009_37ec95c5
+      - boat_03b_82505c3c
+      - boat_038_c3efdee6
+      - cabinet_135_c4715ca1
+      - candle_holder_0d0_6666c3a5
+      - candle_holder_13a_2deb2724
+      - car_004_e3c1f857
+      - car_02a_108becc1
+      - chair_0b4_d494f60b
+      - chair_121_f82d0a60
+      - clock_03b_7cfce603
+      - clock_0ac_f6dbf9c3
+      - dishwasher_023_b85fa9fc
+      - dresser_0af_968129bc
+      - garbage_bin_037_188c8654
+      - garbage_bin_012_f14b0518
+      - jug_004_73dd25fd
+      - jug_02e_85f117b9
+      - lamp_025_bf25d3d0
+      - lamp_1ae_78167875
+      - love_seat_078_eb22c0db
+      - love_seat_06e_f7a99d3c
+      - ottoman_0bd_4665b619
+      - ottoman_03e_cd1e9828
+      - planter_179_cd5b3976
+      - planter_031_d46aa649
+      - sinks_060_e38bff54
+      - sinks_02a_72b97ce5
+      - sofa_148_47004d69
+      - sofa_00a_b191f074
+      - sports_table_031_7e580a96
+      - sports_table_018_a534e7e8
+      - stool_13b_8242932a
+      - stool_0f6_d4d39a81
+      - sun_lounger_000_2876685c
+      - sun_lounger_027_423b6bff
+      - table_24d_270af93d
+      - table_204_054a18d1
+      - toilet_06f_7d228577
+      - toilet_05b_042b0897
+      - tray_00c_46e5f4a7
+      - tray_08f_be47d034
+      - vase_0f1_e0ccb4c4
+      - vase_105_0b9d1cbd
+      - bag_07f_8fff0768
+      - basket_075_3f376da3
+      - bed_0fb_4b878c38
+      - bench_0bd_52a55aa2
+      - bird_house_099_20d4ac5b
+      - boat_02a_ea4aec2d
+      - candle_holder_074_0e0864fc
+      object_init_sampler:
+        _target_: tbp.monty.frameworks.environments.object_init_samplers.RandomRotation
+    logging:
+      monty_log_level: BASIC
+      monty_handlers:
+      - ${monty.class:tbp.monty.frameworks.loggers.monty_handlers.BasicCSVStatsHandler}
+      wandb_handlers: []
+      python_log_level: INFO
+      python_log_to_file: true
+      python_log_to_stderr: true
+      output_dir: ${path.expanduser:${oc.env:MONTY_LOGS}/projects/evidence_eval_runs/logs}
+      resume_wandb_run: false
+      wandb_id:
+        _target_: wandb.util.generate_id
+      wandb_group: evidence_eval_runs
+      run_name: eval_3dc_mixed_amb_hsv_plus_ltp_rgb
+    show_sensor_output: false
+    max_train_steps: 1000
+    max_eval_steps: 500
+    max_total_steps: 6000
+    n_train_epochs: 3
+    model_name_or_path: ${constants.retextured_pretrained_dir}/pretrain_3dc_mixed_amb_all_features/pretrained/
+    n_eval_epochs: 5
+    min_lms_match: 1
+    seed: 42
+    supervised_lm_ids: []
+  _target_: tbp.monty.frameworks.experiments.object_recognition_experiments.MontyObjectRecognitionExperiment
+episodes: all
+num_parallel: 16
+print_cfg: false
+quiet_habitat_logs: true
+constants:
+  default_all_noise_params:
+    features:
+      pose_vectors: 2
+      hsv: 0.1
+      principal_curvatures_log: 0.1
+      pose_fully_defined: 0.01
+    location: 0.002
+  default_sensor_features:
+  - pose_vectors
+  - pose_fully_defined
+  - on_object
+  - hsv
+  - principal_curvatures_log
+  min_eval_steps: 20
+  pretrained_dir: ${path.expanduser:${oc.env:MONTY_MODELS}/pretrained_ycb_v13}
+  compositional_pretrained_dir: ${path.expanduser:${oc.env:MONTY_MODELS}/pretrained_compositional_objects_v4}
+  retextured_pretrained_dir: ${path.expanduser:${oc.env:MONTY_MODELS}/my_trained_models}
+  rotations_all_count: 14
+  rotations_all:
+  - - 0
+    - 0
+    - 0
+  - - 0
+    - 90
+    - 0
+  - - 0
+    - 180
+    - 0
+  - - 0
+    - 270
+    - 0
+  - - 90
+    - 0
+    - 0
+  - - 90
+    - 180
+    - 0
+  - - 35
+    - 45
+    - 0
+  - - 325
+    - 45
+    - 0
+  - - 35
+    - 315
+    - 0
+  - - 325
+    - 315
+    - 0
+  - - 35
+    - 135
+    - 0
+  - - 325
+    - 135
+    - 0
+  - - 35
+    - 225
+    - 0
+  - - 325
+    - 225
+    - 0
+  rotations_3_count: 3
+  rotations_3:
+  - - 0
+    - 0
+    - 0
+  - - 0
+    - 90
+    - 0
+  - - 0
+    - 180
+    - 0
