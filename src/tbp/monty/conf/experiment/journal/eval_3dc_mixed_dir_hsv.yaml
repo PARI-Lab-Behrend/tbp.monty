@@ -25,6 +25,7 @@ experiment:
     n_eval_epochs: 5
     min_lms_match: 1
     seed: 42
+    save_eval_models: false
     supervised_lm_ids: []
     environment:
       env_init_args:

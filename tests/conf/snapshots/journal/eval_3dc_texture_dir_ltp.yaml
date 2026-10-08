@@ -46,7 +46,7 @@ experiment:
             patch:
               hsv: ${np.array:[0.1, 0.2, 0.2]}
               principal_curvatures_log: ${np.ones:2}
-              ltp: 0.5
+              ltp: 0.349
           max_match_distance: 0.01
           x_percent_threshold: 20
           evidence_threshold_config: all
@@ -252,6 +252,7 @@ experiment:
     n_eval_epochs: 5
     min_lms_match: 1
     seed: 42
+    save_eval_models: false
     supervised_lm_ids: []
   _target_: tbp.monty.frameworks.experiments.object_recognition_experiments.MontyObjectRecognitionExperiment
 episodes: all
