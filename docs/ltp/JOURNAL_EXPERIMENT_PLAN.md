@@ -4,8 +4,9 @@
 
 Adding a color Local Ternary Pattern feature (LTP: a histogram of per-pixel
 "brighter / darker than the center by more than a threshold" codes over the sensed
-patch) to Monty's sensor module makes object recognition **more accurate** and
-**faster in steps**, on same-shape/different-texture objects from 3DCoMPaT++, and
+patch) to Monty's sensor module makes object recognition **more accurate** on
+same-shape/different-texture objects from 3DCoMPaT++ (3DC-Texture) and
+**faster in steps** where episodes converge (3DC-Mixed), and
 does so at **lower wall-clock cost than a Gabor-filter texture feature** of
 comparable discriminative power.
 
@@ -13,7 +14,7 @@ Each claim maps to one table or figure:
 
 | Claim | Evidence | Section |
 |---|---|---|
-| Color LTP beats Monty's default (center-pixel hue `hsv`) | Accuracy + steps on two 3DCoMPaT++ sets | Phase 5 |
+| Color LTP beats Monty's default (center-pixel hue `hsv`) | Accuracy on both 3DCoMPaT++ sets; steps on 3DC-Mixed (see Phase 5 metrics) | Phase 5 |
 | Color matters (not only texture) | Grayscale `ltp` vs color LTP | Phase 5 |
 | RGB vs HSV channel choice is justified | Pilot decision record | Phase 3 |
 | LTP is cheaper than Gabor | Per-patch µs and per-episode wall time | Phase 6 |
@@ -210,6 +211,9 @@ training).
     confusions stay within the shape group). If `hsv` > 80%, replace the
     variants that `hsv` separates (the color-outliers in the shape group) or
     pick a different base composition, and rebuild.
+    **Outcome (2026-10-06):** `hsv` 85% (95% CI ~77-91%, 100 episodes);
+    user decision 2026-10-07: keep the dataset, report the deviation and
+    whatever improvement LTP gives.
   - 3DC-Mixed: shape only > 70% (shape mostly separates classes); `hsv` must
     not be at 100% *with zero* steps to spare -- check steps too.
 - Output: confusion matrices; these also become a paper figure motivating
@@ -330,7 +334,9 @@ For every feature used in Phase 5 (color LTP winner, `ltp`, the Gabor
 features), and separately for each lighting scenario's training graphs (a
 deployed system calibrates on its own training data), choose tolerance by the
 same rule on training graphs only:
-maximize mean evidence(within) - mean evidence(across). Fix feature weight
+maximize mean evidence(within) - mean evidence(across), where "across" is
+every other object (decided 2026-10-07; the same-shape-only variant is
+reported alongside for 3DC-Texture). Fix feature weight
 across features (e.g. 1.0 each, normalized by Monty). Identical procedure for
 LTP and Gabor is what makes the comparison fair.
 
@@ -360,8 +366,8 @@ comparison is against a reasonable Gabor, not a naive one.
 | on | `gabor_rgb` | competitor, matched to proposed |
 
 **Design:** 8 conditions x 2 datasets x ~55 objects x 5 random rotations x 2
-seeds = ~550 episodes per cell, ~8,800 per lighting scenario (raise
-rotations/seeds if the Prelim C budget allows). Same seeds across conditions
+seeds = ~550 episodes per cell, ~8,800 per lighting scenario (kept
+2026-10-07; memory caps evals at ~20 processes, so ~7 h wall per lighting). Same seeds across conditions
 and across lighting scenarios, so every test is paired by (object, rotation,
 seed). Training: 4 combined-feature runs (2 datasets x 2 lightings; 14
 predefined rotations; 50-60 objects x 14 = 700-840 episodes each).
@@ -382,7 +388,11 @@ predefined rotations; 50-60 objects x 14 = 700-840 episodes each).
 **Metrics:** `percent_correct`, `avg_convergence_steps` (+ SEM),
 percent timed out (used most-likely hypothesis), and steps-to-correct curves
 (fraction of episodes recognized by step k) -- the curve shows "faster" better
-than a mean.
+than a mean. **Speed is claimed on 3DC-Mixed only** (decided 2026-10-07): on
+3DC-Texture 94-98% of episodes reach the 500-step cap in every condition
+(Monty's 20% evidence-lead stopping rule is rarely met between same-shape
+variants), so 3DC-Texture reports accuracy (at the cap) and timeouts, not
+steps. Stopping rule and weights stay as they are.
 
 **Statistics:** exact McNemar (accuracy) and Wilcoxon signed-rank (steps),
 paired by (object, rotation, seed); Holm correction over the planned

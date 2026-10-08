@@ -1,0 +1,5 @@
+dataset,condition,episodes,percent_correct,percent_correct_before_cap,percent_right_shape_or_class,percent_timed_out,median_steps,mean_steps
+texture,shape_only,100,21.0,1.0,100.0,98.0,500.0,490.18
+texture,hsv,100,85.0,2.0,100.0,96.0,500.0,478.98
+mixed,shape_only,120,94.16666666666667,94.16666666666667,95.83333333333334,0.0,27.0,30.783333333333335
+mixed,hsv,120,99.16666666666667,98.33333333333333,99.16666666666667,0.8333333333333334,26.0,29.108333333333334
