@@ -17,7 +17,7 @@ are under a chosen distance metric, split into two regimes:
 
 A discriminative metric keeps within-object distances small and across-object
 distances large (little overlap), so this is the calibration tool for the ``ltp``
-tolerance/weight (see ``LTP_BRANCH_COMPARISON_ANALYSIS.md`` §4b).
+tolerance/weight (see ``docs/ltp/LTP_EXPERIMENTAL_PROTOCOL.md`` §6).
 
 The tolerance is calibrated against the evidence Monty actually accumulates, not
 against a hard distance threshold. Monty never asks "is this distance below
@@ -29,12 +29,13 @@ node accrues and what a wrong one accrues. :func:`best_tolerance` maximizes that
 gap; :func:`best_threshold` (Youden's J) is retained only as a reference, and
 picks a systematically too-low tolerance that clips correct-object nodes to zero.
 
-The ``chisq`` and ``hellinger`` metrics are the **actual Monty matching
-functions** (:class:`DefaultFeatureEvidenceCalculator` /
-:class:`HellingerFeatureEvidenceCalculator`), so the distances plotted here are
-exactly what Monty computes during matching. The remaining metrics (``l1``,
-``l2``, ``intersection``, ``bhattacharyya``, ``correlation``, ``kldiv``,
-``jensen_shannon``) are extras for comparison; add your own to :data:`METRICS`
+The ``hellinger`` metric is the **actual Monty matching function**
+(:class:`DefaultFeatureEvidenceCalculator`), so the distances plotted under it are
+exactly what Monty computes during matching. ``chisq`` is the asymmetric
+chi-square Monty used before it switched to Hellinger, kept for comparison. The
+remaining metrics (``l1``, ``l2``, ``intersection``, ``bhattacharyya``,
+``correlation``, ``kldiv``, ``jensen_shannon``) are extras for comparison; add your
+own to :data:`METRICS`
 -- any
 ``f(stored_hists[n, bins], query_hist[bins]) -> distances[n]`` works (the same
 signature as ``FeatureEvidenceCalculator.histogram_distance``).
@@ -120,9 +121,9 @@ def _jensen_shannon(stored: np.ndarray, query: np.ndarray) -> np.ndarray:
 def _hellinger(stored: np.ndarray, query: np.ndarray) -> np.ndarray:
     """cv2 Bhattacharyya/Hellinger distance -- the actual Monty LTP matching function.
 
-    :class:`DefaultFeatureEvidenceCalculator` scores LTP histograms with
-    ``cv2.compareHist(..., cv2.HISTCMP_BHATTACHARYYA)``, so the distances plotted
-    here are exactly what Monty computes during recognition on this branch.
+    :class:`DefaultFeatureEvidenceCalculator` scores LTP histograms with the same
+    formula as ``cv2.compareHist(..., cv2.HISTCMP_BHATTACHARYYA)``, so the
+    distances plotted here are exactly what Monty computes during recognition.
     """
     q = query.astype(np.float32)
     return np.array(
@@ -164,7 +165,7 @@ METRICS = {
 # Histogram extraction.
 # --------------------------------------------------------------------------- #
 def extract_histograms(
-    models: dict[str, dict[str, object]], feature: str = "ltp"
+    models: dict[str, dict[str, object]], feature: str = "ltp", normalize: bool = True
 ) -> dict[str, np.ndarray]:
     """Pull normalized per-object histograms out of stored object models.
 
@@ -173,6 +174,9 @@ def extract_histograms(
             the structure of ``EvidenceGraphMemory.models_in_memory`` (and of
             ``state["lm_dict"][lm]["graph_memory"]`` in a saved ``model.pt``).
         feature: Histogram feature name (default ``"ltp"``).
+        normalize: Re-normalize each row to sum to 1. Pass ``False`` for
+            features that are not histograms (e.g. the L2-normalized Gabor
+            vectors), to get the stored values unchanged.
 
     Returns:
         ``{object_id: array(n_nodes, n_bins)}``.
@@ -193,8 +197,7 @@ def extract_histograms(
             mapping = dict(model.feature_mapping)
             if feature not in mapping:
                 raise KeyError(
-                    f"Feature {feature!r} not in {object_id} "
-                    f"(have: {sorted(mapping)})"
+                    f"Feature {feature!r} not in {object_id} (have: {sorted(mapping)})"
                 )
             start, end = mapping[feature]
             x = model.x
@@ -203,9 +206,10 @@ def extract_histograms(
             else:
                 x = np.asarray(x)
             h = x[:, start:end].astype(np.float64)
-            # Re-normalize defensively; stored histograms should already sum to ~1.
-            row_sums = h.sum(axis=1, keepdims=True)
-            h = np.divide(h, row_sums, out=np.zeros_like(h), where=row_sums > 0)
+            if normalize:
+                # Defensive; stored histograms should already sum to ~1.
+                row_sums = h.sum(axis=1, keepdims=True)
+                h = np.divide(h, row_sums, out=np.zeros_like(h), where=row_sums > 0)
             per_channel.append(h)
         if per_channel:
             hists[object_id] = np.vstack(per_channel)
@@ -230,9 +234,7 @@ def histograms_from_model_file(
     return extract_histograms(state["lm_dict"][lm_id]["graph_memory"], feature)
 
 
-def build_groups(
-    object_ids, group_regex: str | None
-) -> dict[str, str] | None:
+def build_groups(object_ids, group_regex: str | None) -> dict[str, str] | None:
     """Map each object id to a shape-group key via ``group_regex`` (or ``None``).
 
     The matched substring is the group key; objects with no match form their own
@@ -310,15 +312,14 @@ def collect_distances(
         buckets["across_object"].append(dists[obj_labels != obj_labels[qi]])
         if group_of is not None:
             same_grp = node_group == node_group[qi]
-            buckets["within_group"].append(dists[same_grp & ~same_obj])
+            other_obj = obj_labels != obj_labels[qi]  # excludes the query itself
+            buckets["within_group"].append(dists[same_grp & other_obj])
             buckets["across_group"].append(dists[~same_grp])
 
     return {k: np.concatenate(v) if v else np.array([]) for k, v in buckets.items()}
 
 
-def best_threshold(
-    within: np.ndarray, across: np.ndarray
-) -> dict[str, float] | None:
+def best_threshold(within: np.ndarray, across: np.ndarray) -> dict[str, float] | None:
     """Distance threshold that best separates ``within`` from ``across``.
 
     A node is classified "same object" when its distance is ``<= threshold``, and
@@ -612,9 +613,7 @@ def summarize(name: str, dist_by_regime: dict[str, np.ndarray]) -> float | None:
     for regime, d in dist_by_regime.items():
         if d.size == 0:
             continue
-        cells = [f"{d.mean():>10.3f}"] + [
-            f"{np.percentile(d, p):>10.3f}" for p in pct
-        ]
+        cells = [f"{d.mean():>10.3f}"] + [f"{np.percentile(d, p):>10.3f}" for p in pct]
         print(f"{regime:<16}{d.size:>10}{''.join(cells)}")
 
     within = dist_by_regime.get("within_object", np.array([]))

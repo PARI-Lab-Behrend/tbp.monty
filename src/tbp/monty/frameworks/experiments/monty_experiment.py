@@ -89,6 +89,9 @@ class MontyExperiment:
             self.model_path = None
         self.min_lms_match = config["min_lms_match"]
         self.show_sensor_output = config["show_sensor_output"]
+        # Eval epochs save the full model by default. With large models and one
+        # parallel episode per process, that writes a model copy per episode.
+        self.save_eval_models = config.get("save_eval_models", True)
         self.supervised_lm_ids = config["supervised_lm_ids"]
         if self.supervised_lm_ids == "all":
             self.supervised_lm_ids = list(
@@ -682,9 +685,8 @@ class MontyExperiment:
         # during evaluation
         # TODO can consider a save frequency for training as well; e.g. currently
         # with training from scratch, we save +++ data
-        if (
-            self.experiment_mode is ExperimentMode.EVAL
-            and self.monty_logger.use_parallel_wandb_logging
+        if self.experiment_mode is ExperimentMode.EVAL and (
+            self.monty_logger.use_parallel_wandb_logging or not self.save_eval_models
         ):
             pass
         else:

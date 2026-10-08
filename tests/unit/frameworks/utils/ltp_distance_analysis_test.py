@@ -14,6 +14,7 @@ import numpy as np
 from tbp.monty.frameworks.utils.ltp_distance_analysis import (
     _l1,
     _mann_whitney_auc,
+    collect_distances,
     location_specificity_auc,
 )
 
@@ -67,3 +68,32 @@ class LocationSpecificityAucTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CollectDistancesTest(unittest.TestCase):
+    def setUp(self):
+        self.rng = np.random.default_rng(0)
+        # Two shapes x two variants, 3 nodes each, all features distinct.
+        self.hists = {
+            name: self.rng.random((3, 4))
+            for name in ("a_000_c0_x", "a_000_c1_y", "b_111_c0_x", "b_111_c1_y")
+        }
+
+    def test_within_group_excludes_query_and_its_object(self):
+        group_of = {name: name[:5] for name in self.hists}
+        dists = collect_distances(
+            self.hists, _l1, self.rng, n_queries=12, group_of=group_of
+        )
+        # Per query: 2 other nodes of its object, 3 of the other variant of its
+        # shape, 6 of the other shape.
+        self.assertEqual(dists["within_object"].size, 12 * 2)
+        self.assertEqual(dists["within_group"].size, 12 * 3)
+        self.assertEqual(dists["across_group"].size, 12 * 6)
+        self.assertTrue(np.all(dists["within_group"] > 0))
+
+    def test_singleton_groups_give_empty_within_group(self):
+        group_of = {name: name for name in self.hists}
+        dists = collect_distances(
+            self.hists, _l1, self.rng, n_queries=12, group_of=group_of
+        )
+        self.assertEqual(dists["within_group"].size, 0)

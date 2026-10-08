@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import numpy as np
 import numpy.testing as npt
@@ -31,7 +31,9 @@ from tbp.monty.frameworks.utils.sensor_processing import (
     get_ltp_texture_feature_vector,
     local_ternary_pattern_and_hist,
     ltp_codes,
+    principal_curvatures,
     ror_encoding,
+    surface_normal_total_least_squares,
     uniform_encoding,
     wrap_to_period,
 )
@@ -140,6 +142,58 @@ class ComputeArcFromTangentProjectionTest(unittest.TestCase):
         tangent_projection, curvature = params
         result = arc_from_projection(tangent_projection, curvature)
         assert result == tangent_projection
+
+
+class PrincipalCurvaturesComplexEigenvaluesTest(unittest.TestCase):
+    """Round-off can give near-equal curvatures tiny imaginary parts."""
+
+    def setUp(self):
+        # 9 x 9 patch of a sphere cap (radius 0.05) seen from +z, all on object.
+        grid = np.linspace(-0.005, 0.005, 9)
+        xs, ys = np.meshgrid(grid, grid)
+        zs = 0.05 - np.sqrt(0.05**2 - xs**2 - ys**2)
+        self.cloud = np.column_stack(
+            [xs.ravel(), ys.ravel(), zs.ravel(), np.ones(xs.size)]
+        )
+        self.center_id = 40
+
+    def test_complex_eigenvalues_give_real_curvatures(self):
+        real_eig = np.linalg.eig
+
+        def eig_with_round_off(m):
+            eigval, eigvec = real_eig(m)
+            return eigval + 1e-17j, eigvec + 0j
+
+        with patch(
+            "tbp.monty.frameworks.utils.sensor_processing.np.linalg.eig",
+            side_effect=eig_with_round_off,
+        ):
+            k1, k2, dir1, dir2, valid = principal_curvatures(
+                self.cloud, self.center_id, np.array([0.0, 0.0, -1.0])
+            )
+        self.assertTrue(valid)
+        for value in (k1, k2, *dir1, *dir2):
+            self.assertFalse(np.iscomplexobj(value))
+            float(value)  # the conversion that crashed the sensor module
+
+    def test_complex_eigenvalues_give_real_unit_surface_normal(self):
+        real_eig = np.linalg.eig
+
+        def eig_with_round_off(m):
+            eigval, eigvec = real_eig(m)
+            return eigval + 1e-17j, eigvec + 0j
+
+        with patch(
+            "tbp.monty.frameworks.utils.sensor_processing.np.linalg.eig",
+            side_effect=eig_with_round_off,
+        ):
+            n_dir, valid = surface_normal_total_least_squares(
+                self.cloud, self.center_id, np.array([0.0, 0.0, -1.0])
+            )
+        self.assertTrue(valid)
+        self.assertFalse(np.iscomplexobj(n_dir))
+        npt.assert_allclose(np.linalg.norm(n_dir), 1.0)
+        npt.assert_allclose(np.abs(n_dir), [0.0, 0.0, 1.0], atol=1e-6)
 
 
 class DirectionalCurvatureTest(unittest.TestCase):

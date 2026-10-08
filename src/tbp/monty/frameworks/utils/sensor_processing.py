@@ -1507,7 +1507,14 @@ def surface_normal_total_least_squares(
         try:
             # Find eigenvector of M with the minimum eigenvalue
             eig_val, eig_vec = np.linalg.eig(m_mat)
+            # m_mat is a covariance matrix, so its eigenvalues are real; when two
+            # are nearly equal, round-off can return them as a complex pair.
+            complex_result = np.iscomplexobj(eig_val)
+            if complex_result:
+                eig_val, eig_vec = eig_val.real, eig_vec.real
             n_dir = eig_vec[:, np.argmin(eig_val)]
+            if complex_result:
+                n_dir = n_dir / np.linalg.norm(n_dir)
             valid_sn = True
 
             # Align SN with viewing direction
@@ -1618,6 +1625,12 @@ def curvature_at_point(point_cloud, center_id, normal):
             # TODO: here convex PCs are negative but I think they should be positive
             m = np.linalg.inv(guv).dot(buv)
             eigval, eigvec = np.linalg.eig(m)
+            # m = inv(guv) @ buv is similar to a symmetric matrix, so its eigenvalues
+            # are real; when the two curvatures are nearly equal, round-off can
+            # return them with tiny imaginary parts, which break float conversion
+            # downstream.
+            if np.iscomplexobj(eigval):
+                eigval, eigvec = eigval.real, eigvec.real
             idx = eigval.argsort()[::-1]
             eigval_sorted = eigval[idx]
             eigvec_sorted = eigvec[:, idx]
@@ -1765,6 +1778,12 @@ def principal_curvatures(
             # TODO: here convex PCs are negative but I think they should be positive
             m = np.linalg.inv(guv).dot(buv)
             eigval, eigvec = np.linalg.eig(m)
+            # m = inv(guv) @ buv is similar to a symmetric matrix, so its eigenvalues
+            # are real; when the two curvatures are nearly equal, round-off can
+            # return them with tiny imaginary parts, which break float conversion
+            # downstream.
+            if np.iscomplexobj(eigval):
+                eigval, eigvec = eigval.real, eigvec.real
             idx = eigval.argsort()[::-1]
             eigval_sorted = eigval[idx]
             eigvec_sorted = eigvec[:, idx]
